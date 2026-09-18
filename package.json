@@ -10,7 +10,7 @@
     "smoke": "tsx scripts/smoke.ts"
   },
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "dependencies": {
     "cors": "^2.8.5",

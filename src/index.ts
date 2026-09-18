@@ -2,7 +2,6 @@ import cors from "cors";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   BONDING_CURVES,
   DEX_KEY,
@@ -21,14 +20,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-/** Resolve docs/ADAPTER.md from src/, dist/src/, or project root (Vercel). */
+/** Resolve docs/ADAPTER.md from project root (local + Vercel includeFiles). */
 function resolveAdapterDoc(): string | null {
   const candidates = [
     path.join(process.cwd(), "docs", "ADAPTER.md"),
-    path.join(__dirname, "..", "docs", "ADAPTER.md"),
-    path.join(__dirname, "..", "..", "docs", "ADAPTER.md"),
+    path.join(process.cwd(), "ADAPTER.md"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
