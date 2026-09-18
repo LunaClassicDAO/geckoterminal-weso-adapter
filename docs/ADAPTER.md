@@ -53,13 +53,14 @@ Wrap vault contracts must **404** when used as `/pair?id=`.
 
 ## 2. Base URL
 
-Deploy this adapter and publish the public base URL here (example):
-
 ```
-https://<your-host>/
+https://wesoenergy.com/api/gt
 ```
 
-All paths below are relative to that base.
+All paths below are relative to that base (e.g. `GET https://wesoenergy.com/api/gt/latest-block`).
+
+Stable docs URL: `https://wesoenergy.com/api/gt/docs/ADAPTER.md`  
+(also mirrored at `https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`).
 
 ---
 
