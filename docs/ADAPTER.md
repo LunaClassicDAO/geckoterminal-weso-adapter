@@ -54,13 +54,13 @@ Wrap vault contracts must **404** when used as `/pair?id=`.
 ## 2. Base URL
 
 ```
-https://geckoterminal-weso-adapter.vercel.app
+https://weso.world/api/gt
 ```
 
-All paths below are relative to that API base (e.g. `GET https://geckoterminal-weso-adapter.vercel.app/latest-block`).
+All paths below are relative to that API base (e.g. `GET https://weso.world/api/gt/latest-block`).
 
 **Stable docs URLs:**
-- Hosted: `https://geckoterminal-weso-adapter.vercel.app/docs/ADAPTER.md`
+- Hosted: `https://weso.world/api/gt/docs/ADAPTER.md`
 - GitHub raw (always available): `https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`
 
 Production base URL is **`https://weso.world/api/gt`** (hosted on the WESO DeFi DEX Next.js app). Do **not** use wesoenergy.com. Product website for the listing form is `https://weso.world`.
