@@ -54,13 +54,17 @@ Wrap vault contracts must **404** when used as `/pair?id=`.
 ## 2. Base URL
 
 ```
-https://wesoenergy.com/api/gt
+TBD — standalone public HTTPS API base (see LIVE.md / this section after deploy)
 ```
 
-All paths below are relative to that base (e.g. `GET https://wesoenergy.com/api/gt/latest-block`).
+All paths below are relative to that API base (e.g. `GET {BASE}/latest-block`).
 
-Stable docs URL: `https://wesoenergy.com/api/gt/docs/ADAPTER.md`  
-(also mirrored at `https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`).
+**Stable docs URL (always available):**  
+`https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`
+
+Once the standalone adapter host is live, the same document is also served at `{BASE}/docs/ADAPTER.md`.
+
+This adapter is **not** hosted on wesoenergy.com and is **not** part of the weso.world DEX site. Product website for the listing form remains `https://weso.world`.
 
 ---
 

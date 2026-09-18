@@ -1,5 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "express",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 60,
+      "includeFiles": "docs/**"
+    },
+    "src/index.ts": {
+      "maxDuration": 60,
+      "includeFiles": "docs/**"
+    }
+  }
 }
