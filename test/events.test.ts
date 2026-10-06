@@ -147,6 +147,21 @@ test("range below the node's oldest retained block -> 503 with lowestAvailableBl
   });
 });
 
+test("block retained but its txs not in the tx index (pruned index) -> 503, never a short/empty 200", async () => {
+  // mainnet 2026-10-05: block 30522054 was served (1 tx) while tx search for it returned total 0
+  const rec: Recording = { ...loadRecording("curve-buy-sell") };
+  const probeKey = Object.keys(rec).find((k) => k.startsWith("/cosmos/tx/v1beta1/txs?query=tx.height%3D30710200") && k.includes("limit=1"))!;
+  assert.ok(probeKey, "probe request recorded");
+  rec[probeKey] = { status: 200, text: '{"pagination":null,"total":"0","tx_responses":[],"txs":[]}' };
+  use(replayTransport(rec));
+  await assert.rejects(getEvents(30710200, 30710310), (e: unknown) => {
+    assert.ok(e instanceof ApiError);
+    assert.equal(e.status, 503);
+    assert.equal(e.code, "height_not_available");
+    return true;
+  });
+});
+
 test("toBlock beyond the latest available block -> 400 (not an empty 200)", async () => {
   const rec = loadRecording("empty-range");
   const tip = Number(JSON.parse(rec["/cosmos/base/tendermint/v1beta1/blocks/latest"].text).block.header.height);

@@ -246,6 +246,26 @@ export class Session {
    * Run a tx search, walking EVERY page in ascending height order. Verifies the
    * collected count equals the reported total and that hashes are unique.
    */
+  /** Number of txs matching `query` according to the tx index (one cheap page). */
+  async txCount(query: string): Promise<number> {
+    let res: TxSearchResponse;
+    try {
+      res = await this.getJson<TxSearchResponse>(
+        `/cosmos/tx/v1beta1/txs?query=${encodeURIComponent(query)}&order_by=ORDER_BY_ASC&page=1&limit=1`,
+      );
+    } catch (e) {
+      if (e instanceof UpstreamClientError) {
+        throw new ApiError(502, "upstream_bad_response", "Upstream rejected tx search request");
+      }
+      throw e;
+    }
+    const t = Number(res.total ?? res.pagination?.total);
+    if (!Number.isInteger(t) || t < 0) {
+      throw new ApiError(502, "upstream_bad_response", "Upstream tx search returned no total");
+    }
+    return t;
+  }
+
   async searchTxsAll(query: string): Promise<TxResponse[]> {
     const out: TxResponse[] = [];
     const seen = new Set<string>();

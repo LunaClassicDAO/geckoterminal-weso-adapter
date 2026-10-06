@@ -86,7 +86,7 @@ Both bounds inclusive, at most **2000 blocks** per request (`toBlock − fromBlo
 | Param missing, repeated, not a plain non-negative integer, `fromBlock < 1`, `fromBlock > toBlock` | 400 | `invalid_params` |
 | More than 2000 blocks | 400 | `range_too_large` |
 | `toBlock` above the lagged height `/latest-block` would return now (upstream tip − `LATEST_BLOCK_LAG`) | 400 | `range_not_available` (+ `latestBlock`) |
-| `fromBlock` below the oldest block retained by the upstream node | 503 | `height_not_available` (+ `lowestAvailableBlock`) |
+| `fromBlock` below the oldest block (or oldest indexed tx) retained by the upstream node | 503 | `height_not_available` (+ `lowestAvailableBlock` when the node reports it) |
 | Upstream node unreachable / 5xx / 429 after retries and fail-over | 502 | `upstream_unavailable` |
 | Every upstream rejects the request with a 4xx (misconfigured / incompatible node) | 502 | `upstream_bad_response` |
 | Upstream returned inconsistent data (tx-search totals, block contents) | 503 | `upstream_inconsistent` |

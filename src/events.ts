@@ -4,6 +4,7 @@ import {
   LATEST_BLOCK_SAMPLES,
   MAX_EVENTS_BLOCK_SPAN,
   RESERVE_CONSISTENCY_ATTEMPTS,
+  TX_INDEX_PROBES,
   UPSTREAM_CONCURRENCY,
 } from "./config.js";
 import { decimalize } from "./decimal.js";
@@ -313,10 +314,39 @@ async function sessionCovering(toBlock: number): Promise<Session> {
   );
 }
 
+/**
+ * The range must be fully retained by the upstream: fromBlock must exist in the
+ * block store (else 503 height_not_available from s.block) AND the tx index must
+ * cover it. Pruning is bottom-up, so it suffices to check the first block >=
+ * fromBlock that contains txs: its indexed tx count must equal its real count.
+ * Blocks before it are empty, so nothing there can be missed.
+ */
+const MAX_EMPTY_PROBE_BLOCKS = 50;
+async function assertRangeRetained(s: Session, fromBlock: number, toBlock: number): Promise<void> {
+  for (let h = fromBlock; h <= toBlock && h < fromBlock + MAX_EMPTY_PROBE_BLOCKS; h++) {
+    const blk = await s.block(h);
+    const n = (blk.block?.data?.txs ?? []).length;
+    if (n === 0) continue;
+    for (let i = 0; i < TX_INDEX_PROBES; i++) {
+      if ((await s.txCount(`tx.height=${h}`)) !== n) {
+        throw new ApiError(
+          503,
+          "height_not_available",
+          `Transactions of block ${h} are not (fully) indexed by the upstream node; the range is below its retained tx history`,
+        );
+      }
+    }
+    return;
+  }
+  if (toBlock >= fromBlock + MAX_EMPTY_PROBE_BLOCKS) {
+    throw new ApiError(503, "upstream_inconsistent", `No transactions in blocks ${fromBlock}+; cannot verify tx index retention`);
+  }
+}
+
 export async function getEvents(fromBlock: number, toBlock: number): Promise<IndexedEvent[]> {
   const pairs = (await listPairs()).map((p) => p.def);
   const s = await sessionCovering(toBlock);
-  await s.block(fromBlock); // 503 height_not_available if pruned on this upstream
+  await assertRangeRetained(s, fromBlock, toBlock);
 
   // 1. discovery: every tx that executed a pair contract in the range (all pages)
   const found = await mapLimit(pairs, UPSTREAM_CONCURRENCY, (p) =>

@@ -62,6 +62,13 @@ export const UPSTREAM_BACKOFF_MAX_MS = intEnv("UPSTREAM_BACKOFF_MAX_MS", 2000);
  * detects that, and fresh reads usually land on a correct backend. If it still
  * fails after these attempts the request returns 503.
  */
+/**
+ * Before searching a range, the tx index is probed this many times at the
+ * first block >= fromBlock that has txs: the node's tx index can be pruned
+ * higher than its block store (observed: block 30522054 retained, its tx not
+ * searchable), and behind a load balancer each probe may hit another backend.
+ */
+export const TX_INDEX_PROBES = intEnv("TX_INDEX_PROBES", 3, 1);
 export const RESERVE_CONSISTENCY_ATTEMPTS = intEnv("RESERVE_CONSISTENCY_ATTEMPTS", 4, 1);
 
 /**
