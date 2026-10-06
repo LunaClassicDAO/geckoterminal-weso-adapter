@@ -1,0 +1,30 @@
+{
+  "name": "juris-router",
+  "from": 30706080,
+  "to": 30706090,
+  "note": "JURIS swap routed via router (maker = signer), txIndex 5",
+  "events": [
+    {
+      "block": {
+        "blockNumber": 30706085,
+        "blockTimestamp": 1791222812
+      },
+      "eventType": "swap",
+      "txnId": "D4C01235B8298C7C80B1F53900237B78C3A177CE84EF0A2135DF8C1EBFFFE911",
+      "txnIndex": 5,
+      "eventIndex": 23,
+      "maker": "terra1c00fgal7ftntug608e27l37n3z2gldp0xfgeuh",
+      "pairId": "terra14jedagazgdawpjfn37yhec5lfxs5fh22r6cl3uspa4x9yt8hnhlsp322v7",
+      "asset1In": "231000",
+      "asset0Out": "5157373.522822",
+      "priceNative": "0.04479024041555205052266838982510419449191959304584",
+      "reserves": {
+        "asset0": "338346406.820647",
+        "asset1": "15312261.538216"
+      },
+      "metadata": {
+        "fees0Out": "10314.747046"
+      }
+    }
+  ]
+}

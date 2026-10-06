@@ -1,0 +1,30 @@
+{
+  "name": "juris-big-block",
+  "from": 30694741,
+  "to": 30694741,
+  "note": "JURIS swap at txIndex 84 of 87 (old adapter reported reserve1 18380141.07)",
+  "events": [
+    {
+      "block": {
+        "blockNumber": 30694741,
+        "blockTimestamp": 1791155588
+      },
+      "eventType": "swap",
+      "txnId": "E72D9D3AA059E55CB10B7FB2797C409C1B9B1D481F7E596A4EB4F79068554765",
+      "txnIndex": 84,
+      "eventIndex": 17,
+      "maker": "terra12jlsn34ampqfwcvhtsp2z0hjl3jur9s5yel90g",
+      "pairId": "terra14jedagazgdawpjfn37yhec5lfxs5fh22r6cl3uspa4x9yt8hnhlsp322v7",
+      "asset1In": "1036712.002009",
+      "asset0Out": "23071768.969054",
+      "priceNative": "0.04493422257303002867898804237767654311290904061895",
+      "reserves": {
+        "asset0": "346767352.541905",
+        "asset1": "15868182.834228"
+      },
+      "metadata": {
+        "fees0Out": "46143.537939"
+      }
+    }
+  ]
+}

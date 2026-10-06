@@ -1,0 +1,30 @@
+{
+  "name": "juris-chancla",
+  "from": 30696758,
+  "to": 30696758,
+  "note": "direct JURIS->CWLUNC swap with chancla tax + vault hydration",
+  "events": [
+    {
+      "block": {
+        "blockNumber": 30696758,
+        "blockTimestamp": 1791167543
+      },
+      "eventType": "swap",
+      "txnId": "C90E0A5E5AB5DE219633540BA444574545D01D8A914E016F27189AB52833376F",
+      "txnIndex": 0,
+      "eventIndex": 11,
+      "maker": "terra18ghfdxm524jlkrthg54ttu68elfp7jpwx5at96",
+      "pairId": "terra14jedagazgdawpjfn37yhec5lfxs5fh22r6cl3uspa4x9yt8hnhlsp322v7",
+      "asset0In": "5000000",
+      "asset1Out": "225398.450461",
+      "priceNative": "0.0450796900922",
+      "reserves": {
+        "asset0": "349716810.628139",
+        "asset1": "15847905.236608"
+      },
+      "metadata": {
+        "fees1Out": "11698.179579"
+      }
+    }
+  ]
+}

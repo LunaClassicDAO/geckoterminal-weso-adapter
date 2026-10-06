@@ -1,0 +1,52 @@
+{
+  "name": "curve-buy-sell",
+  "from": 30710200,
+  "to": 30710310,
+  "note": "WESO curve buy 72983185 + burn/sell 746A91D1",
+  "events": [
+    {
+      "block": {
+        "blockNumber": 30710210,
+        "blockTimestamp": 1791247233
+      },
+      "eventType": "swap",
+      "txnId": "72983185E1B2C06330A238D723B802A40C647FBFB6D092B604F479A197109C6D",
+      "txnIndex": 3,
+      "eventIndex": 12,
+      "maker": "terra17qfdg4k5mdgat2a3ydg6kfj5u6uxcw85gkglwc",
+      "pairId": "terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms",
+      "asset0In": "11895.131788",
+      "asset1Out": "298.663437",
+      "priceNative": "0.02535909438234049793098526809429985552876386565593",
+      "reserves": {
+        "asset0": "335015279.849823",
+        "asset1": "0"
+      },
+      "metadata": {
+        "fees0In": "117.761804"
+      }
+    },
+    {
+      "block": {
+        "blockNumber": 30710307,
+        "blockTimestamp": 1791247807
+      },
+      "eventType": "swap",
+      "txnId": "746A91D1EC0FB16BD06528389D32E7CBBBC402513D62FBB8FB97BAF48C840556",
+      "txnIndex": 0,
+      "eventIndex": 9,
+      "maker": "terra1uyz8jh7c6uemlduxey527zcs48qudr7ssqca96",
+      "pairId": "terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms",
+      "asset1In": "498.514332",
+      "asset0Out": "19459.651165",
+      "priceNative": "0.02561784524157476077757840938152294982313471496394",
+      "reserves": {
+        "asset0": "334995820.198658",
+        "asset1": "0"
+      },
+      "metadata": {
+        "fees0Out": "31.135441"
+      }
+    }
+  ]
+}
