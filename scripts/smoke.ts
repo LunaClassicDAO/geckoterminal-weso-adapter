@@ -1,211 +1,134 @@
 /**
- * Basic smoke test against a running adapter (default http://127.0.0.1:8080).
+ * Live smoke test against a running adapter (default http://localhost:8080).
+ *   BASE_URL=https://geckoterminal-weso-adapter.vercel.app npm run smoke
+ *
+ * 1. /latest-block sanity
+ * 2. scans back from latest-block in 2000-block chunks (max ~26 h) until a
+ *    chunk with >= MIN_EVENTS events is found (fails if none)
+ * 3. validates every event against GT schema rules
+ * 4. /pair + /asset for every referenced id
+ * 5. repeats the chunk and requires byte-identical output
+ * 6. negative checks: invalid params -> 400, range above latest-block -> 400
  */
-const BASE = (process.env.ADAPTER_URL || "http://127.0.0.1:8080").replace(
-  /\/$/,
-  "",
-);
+const BASE = (process.env.BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+const SPAN = 2000;
+const MAX_CHUNKS = Number(process.env.SMOKE_MAX_CHUNKS || 8); // 8 x 2000 blocks ~ 26 h at ~5.9 s/block
+const MIN_EVENTS = Number(process.env.SMOKE_MIN_EVENTS || 1);
 
-const WESO =
-  "terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms";
-const REBASE = "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m";
-const CWLUNC =
-  "terra10fusc7487y4ju2v5uavkauf3jdpxx9h8sc7wsqdqg4rne8t4qyrq8385q6";
-
-async function get(path: string) {
-  const res = await fetch(`${BASE}${path}`);
-  const text = await res.text();
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text;
+let failures = 0;
+function check(cond: unknown, msg: string): void {
+  if (!cond) {
+    failures++;
+    console.error(`FAIL: ${msg}`);
   }
-  return { status: res.status, body };
 }
 
-function assert(cond: unknown, msg: string): asserts cond {
-  if (!cond) throw new Error(msg);
+async function raw(path: string): Promise<{ status: number; text: string }> {
+  const r = await fetch(BASE + path);
+  return { status: r.status, text: await r.text() };
+}
+async function json(path: string): Promise<{ status: number; body: any }> {
+  const r = await raw(path);
+  return { status: r.status, body: JSON.parse(r.text) };
+}
+
+const DEC = /^\d+(\.\d+)?$/;
+
+function validateEvent(e: any, pairs: Map<string, any>): void {
+  const where = `${e.txnId}#${e.eventIndex}`;
+  check(Number.isInteger(e.block?.blockNumber) && Number.isInteger(e.block?.blockTimestamp), `${where} block`);
+  check(String(e.block?.blockTimestamp).length === 10, `${where} timestamp in seconds`);
+  check(/^[0-9A-F]{64}$/.test(e.txnId), `${where} txnId`);
+  check(Number.isInteger(e.txnIndex) && e.txnIndex >= 0, `${where} txnIndex`);
+  check(Number.isInteger(e.eventIndex) && e.eventIndex >= 0, `${where} eventIndex`);
+  check(typeof e.maker === "string" && e.maker.startsWith("terra1"), `${where} maker`);
+  check(pairs.has(e.pairId), `${where} pairId listed`);
+  check(DEC.test(e.reserves?.asset0) && DEC.test(e.reserves?.asset1), `${where} reserves decimal strings`);
+  if (e.eventType === "swap") {
+    const a = e.asset0In != null && e.asset1Out != null && e.asset1In == null && e.asset0Out == null;
+    const b = e.asset1In != null && e.asset0Out != null && e.asset0In == null && e.asset1Out == null;
+    check(a || b, `${where} exactly one of asset0In+asset1Out / asset1In+asset0Out`);
+    for (const k of ["asset0In", "asset1In", "asset0Out", "asset1Out"]) {
+      if (e[k] != null) check(DEC.test(e[k]) && Number(e[k]) > 0, `${where} ${k} positive decimal`);
+    }
+    check(DEC.test(e.priceNative) && /[1-9]/.test(e.priceNative), `${where} priceNative > 0`);
+    check((e.priceNative.split(".")[1] ?? "").length <= 50, `${where} priceNative <= 50 dp`);
+    for (const k of Object.keys(e.metadata ?? {})) {
+      check(["fees0In", "fees1In", "fees0Out", "fees1Out"].includes(k), `${where} metadata key ${k}`);
+    }
+  } else if (e.eventType === "join" || e.eventType === "exit") {
+    check(DEC.test(e.amount0) && DEC.test(e.amount1), `${where} join/exit amounts`);
+  } else {
+    check(false, `${where} unknown eventType ${e.eventType}`);
+  }
 }
 
 async function main() {
-  console.log("Smoke testing", BASE);
+  console.log(`smoke: ${BASE}`);
+  const lb = await json("/latest-block");
+  check(lb.status === 200 && Number.isInteger(lb.body?.block?.blockNumber), "/latest-block");
+  const latest: number = lb.body.block.blockNumber;
+  console.log(`latest-block ${latest}`);
 
-  const health = await get("/health");
-  assert(health.status === 200, `/health status ${health.status}`);
-  const h = health.body as any;
-  assert(h.pairCount >= 3, `pairCount expected >=3, got ${h.pairCount}`);
-  assert(
-    h.bondingCurvePairCount === 2,
-    `bondingCurvePairCount expected 2, got ${h.bondingCurvePairCount}`,
-  );
-  console.log(
-    "✓ /health",
-    h.pairCount,
-    "pairs (",
-    h.ammPairCount,
-    "AMM +",
-    h.bondingCurvePairCount,
-    "curves)",
-  );
+  const pl = await json("/pairs");
+  check(pl.status === 200 && pl.body.pairs.length > 0, "/pairs");
+  const pairs = new Map<string, any>(pl.body.pairs.map((p: any) => [p.id, p]));
 
-  const latest = await get("/latest-block");
-  assert(latest.status === 200, `/latest-block status ${latest.status}`);
-  const block = (latest.body as any).block;
-  assert(block?.blockNumber > 0, "blockNumber missing");
-  assert(block?.blockTimestamp > 0, "blockTimestamp missing");
-  console.log("✓ /latest-block", block.blockNumber, block.blockTimestamp);
-
-  const asset = await get("/asset?id=uluna");
-  assert(asset.status === 200, `/asset uluna status ${asset.status}`);
-  const a = (asset.body as any).asset;
-  assert(a?.id === "uluna", "uluna id");
-  assert(a?.symbol === "LUNC", "uluna symbol");
-  assert(a?.decimals === 6, "uluna decimals");
-  console.log("✓ /asset?id=uluna", a.symbol, a.decimals);
-
-  // Product curve CW20 assets
-  for (const [id, symbol] of [
-    [WESO, "WESO"],
-    [REBASE, "reBASE"],
-  ] as const) {
-    const r = await get(`/asset?id=${encodeURIComponent(id)}`);
-    assert(r.status === 200, `/asset ${symbol} status ${r.status}`);
-    const as = (r.body as any).asset;
-    assert(as?.id === id, `${symbol} id`);
-    assert(as?.symbol === symbol, `${symbol} symbol got ${as?.symbol}`);
-    assert(as?.decimals === 6, `${symbol} decimals`);
-    console.log("✓ /asset", symbol, as.name, as.decimals);
+  let found: { from: number; to: number; text: string; events: any[] } | null = null;
+  for (let i = 0; i < MAX_CHUNKS && !found; i++) {
+    const to = latest - i * SPAN;
+    const from = to - SPAN + 1;
+    const r = await raw(`/events?fromBlock=${from}&toBlock=${to}`);
+    check(r.status === 200, `/events ${from}-${to} status ${r.status}: ${r.text.slice(0, 200)}`);
+    if (r.status !== 200) break;
+    const evs = JSON.parse(r.text).events;
+    console.log(`events ${from}-${to}: ${evs.length}`);
+    if (evs.length >= MIN_EVENTS) found = { from, to, text: r.text, events: evs };
   }
-
-  const pairs = await get("/pairs");
-  assert(pairs.status === 200, `/pairs status ${pairs.status}`);
-  const list = (pairs.body as any).pairs || [];
-  assert(list.length > 0, "expected at least one pair");
-  const ids = new Set(list.map((p: any) => p.id));
-  assert(ids.has(WESO), "/pairs must include $WESO curve id");
-  assert(ids.has(REBASE), "/pairs must include $reBASE curve id");
-  const wesoPair = list.find((p: any) => p.id === WESO);
-  const rebasePair = list.find((p: any) => p.id === REBASE);
-  assert(wesoPair?.asset0Id === "uluna", "WESO asset0Id=uluna");
-  assert(wesoPair?.asset1Id === WESO, "WESO asset1Id=curve");
-  assert(wesoPair?.name === "LUNC/WESO", `WESO name got ${wesoPair?.name}`);
-  assert(rebasePair?.asset0Id === "uusd", "reBASE asset0Id=uusd");
-  assert(rebasePair?.asset1Id === REBASE, "reBASE asset1Id=curve");
-  assert(
-    rebasePair?.name === "USTC/reBASE",
-    `reBASE name got ${rebasePair?.name}`,
-  );
-  assert(wesoPair?.dexKey === "weso-defi", "dexKey");
-  console.log("✓ /pairs includes curves", wesoPair.name, "+", rebasePair.name);
-  console.log(
-    "  total",
-    list.length,
-    "names:",
-    list.map((p: any) => p.name).join(", "),
-  );
-
-  for (const id of [WESO, REBASE]) {
-    const pair = await get(`/pair?id=${encodeURIComponent(id)}`);
-    assert(pair.status === 200, `/pair ${id.slice(0, 12)} status ${pair.status}`);
-    const p = (pair.body as any).pair;
-    assert(p.metadata?.bondingCurve === "true", "bondingCurve metadata");
-    assert(p.metadata?.pairType === "cw20_bonding", "pairType");
-    console.log("✓ /pair", p.name, p.id.slice(0, 16) + "…");
-  }
-
-  // Wrap vault must 404 as a pair
-  const wrap = await get(`/pair?id=${encodeURIComponent(CWLUNC)}`);
-  assert(wrap.status === 404, `wrap vault as pair should 404, got ${wrap.status}`);
-  console.log("✓ wrap vault /pair 404");
-
-  // Small recent window — may be empty of swaps, but must be valid schema
-  const to = block.blockNumber;
-  const from = Math.max(1, to - 50);
-  const events = await get(`/events?fromBlock=${from}&toBlock=${to}`);
-  assert(events.status === 200, `/events status ${events.status}`);
-  const evs = (events.body as any).events;
-  assert(Array.isArray(evs), "events array");
-  console.log(`✓ /events ${from}-${to} → ${evs.length} event(s)`);
-
-  // Known JURIS/CWLUNC window with swaps (if still within chain history)
-  const juris =
-    "terra14jedagazgdawpjfn37yhec5lfxs5fh22r6cl3uspa4x9yt8hnhlsp322v7";
-  const hist = await get(`/events?fromBlock=30442580&toBlock=30442730`);
-  if (hist.status === 200) {
-    const he = (hist.body as any).events as any[];
-    const swaps = he.filter(
-      (e) => e.eventType === "swap" && e.pairId === juris,
-    );
-    console.log(
-      `✓ historical JURIS window swaps: ${swaps.length} (priceNative checks)`,
-    );
-    for (const s of swaps.slice(0, 3)) {
-      assert(s.priceNative && Number(s.priceNative) !== 0, "priceNative != 0");
-      assert(s.reserves?.asset0 && s.reserves?.asset1, "reserves present");
-      const sides =
-        (s.asset0In != null && s.asset1Out != null) ||
-        (s.asset1In != null && s.asset0Out != null);
-      assert(sides, "swap sides");
-    }
-  } else {
-    console.warn("⚠ historical JURIS window unavailable", hist.status);
-  }
-
-  // WESO curve activity window (known buy around 30447656)
-  const curveFrom = 30447500;
-  const curveTo = 30447700;
-  const curveEv = await get(
-    `/events?fromBlock=${curveFrom}&toBlock=${curveTo}`,
-  );
-  let curveSwapsWithPrice = 0;
-  if (curveEv.status === 200) {
-    const ce = (curveEv.body as any).events as any[];
-    const curveSwaps = ce.filter(
-      (e) =>
-        e.eventType === "swap" &&
-        (e.pairId === WESO || e.pairId === REBASE) &&
-        Number(e.priceNative) > 0,
-    );
-    curveSwapsWithPrice = curveSwaps.length;
-    console.log(
-      `✓ curve window ${curveFrom}-${curveTo}: ${curveSwaps.length} curve swap(s) with priceNative>0`,
-    );
-    for (const s of curveSwaps.slice(0, 3)) {
-      assert(Number(s.priceNative) > 0, "curve priceNative > 0");
-      assert(
-        Number(s.reserves?.asset0) > 0 && Number(s.reserves?.asset1) > 0,
-        "curve reserves > 0",
+  check(found, `no chunk with >= ${MIN_EVENTS} events in the last ${MAX_CHUNKS * SPAN} blocks`);
+  if (found) {
+    const keys = new Set<string>();
+    let prev = [-1, -1, -1];
+    for (const e of found.events) {
+      validateEvent(e, pairs);
+      const k = `${e.block.blockNumber}:${e.txnIndex}:${e.eventIndex}`;
+      check(!keys.has(k), `duplicate position ${k}`);
+      keys.add(k);
+      const cur = [e.block.blockNumber, e.txnIndex, e.eventIndex];
+      check(
+        cur[0] > prev[0] || (cur[0] === prev[0] && (cur[1] > prev[1] || (cur[1] === prev[1] && cur[2] > prev[2]))),
+        `events sorted at ${k}`,
       );
-      const sides =
-        (s.asset0In != null && s.asset1Out != null) ||
-        (s.asset1In != null && s.asset0Out != null);
-      assert(sides, "curve swap sides");
-      console.log(
-        "  curve swap",
-        s.pairId === WESO ? "WESO" : "reBASE",
-        s.txnId.slice(0, 10),
-        "priceNative",
-        s.priceNative,
-        s.asset0In != null ? "buy" : "sell",
-      );
+      prev = cur;
     }
-  } else {
-    console.warn("⚠ curve window unavailable", curveEv.status, curveEv.body);
+    const ids = new Set<string>();
+    for (const e of found.events) ids.add(e.pairId);
+    for (const id of ids) {
+      const p = await json(`/pair?id=${encodeURIComponent(id)}`);
+      check(p.status === 200 && p.body.pair?.name && p.body.pair.dexKey === "weso-defi", `/pair ${id}`);
+      for (const a of [p.body.pair.asset0Id, p.body.pair.asset1Id]) {
+        const as = await json(`/asset?id=${encodeURIComponent(a)}`);
+        check(as.status === 200 && as.body.asset?.symbol && Number.isInteger(as.body.asset.decimals), `/asset ${a}`);
+      }
+    }
+    const again = await raw(`/events?fromBlock=${found.from}&toBlock=${found.to}`);
+    check(again.text === found.text, "same range twice is byte-identical");
+    console.log(`validated ${found.events.length} events in ${found.from}-${found.to}`);
   }
 
-  if (curveSwapsWithPrice < 1) {
-    console.log(
-      "⚠ No curve swaps in 30447500–30447700 (LCD may have pruned). Verified offline via LCD tx 233FBC…8116 (buy) and E40C1B…05D5 (burn) wasm action=swap + offer/ask attrs; mapping covered by unit of adapter logic.",
-    );
-  } else {
-    assert(curveSwapsWithPrice >= 1, "expected ≥1 curve swap with priceNative>0");
-  }
+  const bad = await json("/events?fromBlock=abc&toBlock=1");
+  check(bad.status === 400, "invalid params -> 400");
+  const ahead = await json(`/events?fromBlock=${latest + 1000}&toBlock=${latest + 1010}`);
+  check(ahead.status === 400 && Array.isArray(ahead.body.events) === false, "range above latest-block -> 400");
 
-  console.log("\nSmoke OK");
+  if (failures) {
+    console.error(`smoke: ${failures} failure(s)`);
+    process.exit(1);
+  }
+  console.log("smoke: OK");
 }
 
 main().catch((e) => {
-  console.error("Smoke FAILED", e);
+  console.error(e);
   process.exit(1);
 });
