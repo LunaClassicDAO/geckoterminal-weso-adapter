@@ -1,432 +1,373 @@
-import { MAX_EVENTS_BLOCK_SPAN } from "./config.js";
-import { searchTxsByContractAndHeight, type TxResponse } from "./lcd.js";
-import { listPairs, getPoolReserves, type ResolvedPair } from "./pairs.js";
-import type { IndexedEvent, Block } from "./types.js";
+import { createHash } from "node:crypto";
+import { LATEST_BLOCK_LAG, LATEST_BLOCK_SAMPLES, MAX_EVENTS_BLOCK_SPAN, UPSTREAM_CONCURRENCY } from "./config.js";
+import { decimalize } from "./decimal.js";
 import {
-  decimalize,
-  normalizeAssetAttr,
-  parseIsoToUnix,
-  priceNativeFromTrade,
-  splitWasmSections,
-} from "./utils.js";
+  balanceDeltas,
+  extractPairEvents,
+  flattenTxEvents,
+  txMentions,
+  type FlatEvent,
+  type PairDef,
+  type ParsedEvent,
+  ParseError,
+} from "./parse.js";
+import { listPairs } from "./pairs.js";
+import type { Block, IndexedEvent } from "./types.js";
+import { ApiError, blockTimestamp, getUpstreamUrls, Session, type TxResponse } from "./upstream.js";
 
-const JOIN_ACTIONS = new Set([
-  "provide_liquidity",
-  "join_pool",
-  "add_liquidity",
-]);
-const EXIT_ACTIONS = new Set([
-  "withdraw_liquidity",
-  "exit_pool",
-  "remove_liquidity",
-]);
+// ------------------------------------------------------------------ helpers
 
-function blockFromTx(tx: TxResponse): Block {
-  const blockNumber = Number(tx.height);
-  const blockTimestamp =
-    parseIsoToUnix(tx.timestamp) ?? Math.floor(Date.now() / 1000);
-  return { blockNumber, blockTimestamp };
-}
-
-function collectWasmSections(tx: TxResponse): Array<{
-  section: Record<string, string>;
-  msgIndex: number;
-  eventIndex: number;
-}> {
-  const out: Array<{
-    section: Record<string, string>;
-    msgIndex: number;
-    eventIndex: number;
-  }> = [];
-  let globalEventIndex = 0;
-
-  const logs = tx.logs;
-  if (logs && logs.length) {
-    for (const log of logs) {
-      const msgIndex = log.msg_index ?? 0;
-      for (const ev of log.events || []) {
-        if (ev.type !== "wasm" && ev.type !== "from_contract") continue;
-        const sections = splitWasmSections(ev.attributes || []);
-        for (const section of sections) {
-          out.push({
-            section,
-            msgIndex,
-            eventIndex: globalEventIndex++,
-          });
-        }
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  let failed: unknown = null;
+  async function worker() {
+    while (failed == null) {
+      const i = next++;
+      if (i >= items.length) return;
+      try {
+        out[i] = await fn(items[i]);
+      } catch (e) {
+        failed = failed ?? e;
+        return;
       }
     }
-    return out;
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failed != null) throw failed;
+  return out;
+}
+
+export function txHashFromBase64(b64: string): string {
+  return createHash("sha256").update(Buffer.from(b64, "base64")).digest("hex").toUpperCase();
+}
+
+const STRICT_UINT = /^(0|[1-9]\d*)$/;
+
+/** Validate the raw query params of /events. Throws ApiError(400) on anything but two strict non-negative integers. */
+export function parseRange(fromRaw: unknown, toRaw: unknown): { fromBlock: number; toBlock: number } {
+  if (typeof fromRaw !== "string" || typeof toRaw !== "string") {
+    throw new ApiError(400, "invalid_params", "fromBlock and toBlock are required, each exactly once");
+  }
+  if (!STRICT_UINT.test(fromRaw) || !STRICT_UINT.test(toRaw)) {
+    throw new ApiError(400, "invalid_params", "fromBlock and toBlock must be non-negative integers");
+  }
+  const fromBlock = Number(fromRaw);
+  const toBlock = Number(toRaw);
+  if (!Number.isSafeInteger(fromBlock) || !Number.isSafeInteger(toBlock)) {
+    throw new ApiError(400, "invalid_params", "fromBlock and toBlock are out of range");
+  }
+  if (fromBlock < 1) throw new ApiError(400, "invalid_params", "fromBlock must be >= 1");
+  if (fromBlock > toBlock) throw new ApiError(400, "invalid_params", "fromBlock must be <= toBlock");
+  if (toBlock - fromBlock + 1 > MAX_EVENTS_BLOCK_SPAN) {
+    throw new ApiError(
+      400,
+      "range_too_large",
+      `At most ${MAX_EVENTS_BLOCK_SPAN} blocks per request (toBlock - fromBlock + 1)`,
+      { maxBlockSpan: MAX_EVENTS_BLOCK_SPAN },
+    );
+  }
+  return { fromBlock, toBlock };
+}
+
+// ------------------------------------------------------------- latest block
+
+async function minTip(s: Session, samples: number): Promise<number> {
+  let m = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < samples; i++) m = Math.min(m, await s.latestHeight());
+  return m;
+}
+
+/**
+ * Lagged latest block: min over LATEST_BLOCK_SAMPLES tip samples on every
+ * configured upstream, minus LATEST_BLOCK_LAG. Any upstream failure fails the
+ * request (5xx) so GT retries instead of advancing on partial information.
+ */
+export async function getLatestBlock(): Promise<Block> {
+  const urls = getUpstreamUrls();
+  let m = Number.POSITIVE_INFINITY;
+  for (const url of urls) m = Math.min(m, await minTip(new Session([url]), LATEST_BLOCK_SAMPLES));
+  const height = m - LATEST_BLOCK_LAG;
+  if (!Number.isSafeInteger(height) || height < 1) {
+    throw new ApiError(502, "upstream_bad_response", "Upstream returned an invalid chain height");
+  }
+  const blk = await new Session().block(height);
+  return { blockNumber: height, blockTimestamp: blockTimestamp(blk) };
+}
+
+// ------------------------------------------------------------------- events
+
+interface BlockCtx {
+  height: number;
+  timestamp: number;
+  /** canonical tx list of the block, in block order */
+  txs: TxResponse[];
+  flats: FlatEvent[][];
+  indexByHash: Map<string, number>;
+}
+
+async function loadBlock(s: Session, height: number): Promise<BlockCtx> {
+  const [blk, searched] = await Promise.all([s.block(height), s.searchTxsAll(`tx.height=${height}`)]);
+  const raw = blk.block?.data?.txs ?? [];
+  const hashes = raw.map(txHashFromBase64);
+  const indexByHash = new Map<string, number>();
+  hashes.forEach((h, i) => indexByHash.set(h, i));
+  if (indexByHash.size !== hashes.length || searched.length !== hashes.length) {
+    throw new ApiError(503, "upstream_inconsistent", `Tx index for block ${height} is incomplete`);
+  }
+  const ordered = new Array<TxResponse>(hashes.length);
+  for (const tx of searched) {
+    const i = indexByHash.get(String(tx.txhash).toUpperCase());
+    if (i == null || Number(tx.height) !== height || ordered[i]) {
+      throw new ApiError(503, "upstream_inconsistent", `Tx index for block ${height} does not match block contents`);
+    }
+    ordered[i] = tx;
+  }
+  return {
+    height,
+    timestamp: blockTimestamp(blk),
+    txs: ordered,
+    flats: ordered.map((t) => flattenTxEvents(t)),
+    indexByHash,
+  };
+}
+
+type Balances = [bigint, bigint];
+
+async function balancesAt(s: Session, pair: PairDef, height: number): Promise<Balances> {
+  const one = async (assetId: string, isAsset1: boolean): Promise<bigint> => {
+    if (pair.kind === "curve" && isAsset1) return 0n; // nothing pooled; see README "Bonding-curve reserves"
+    if (assetId.startsWith("terra1")) return s.cw20Balance(assetId, pair.id, height);
+    return s.bankBalance(pair.id, assetId, height);
+  };
+  return Promise.all([one(pair.asset0Id, false), one(pair.asset1Id, true)]) as Promise<Balances>;
+}
+
+function trackedAssets(pair: PairDef): string[] {
+  return pair.kind === "curve" ? [pair.asset0Id] : [pair.asset0Id, pair.asset1Id];
+}
+
+function sumDeltas(tx: TxResponse, flat: FlatEvent[], pair: PairDef): { d0: bigint; d1: bigint; ok: boolean } {
+  const { deltas, unknown } = balanceDeltas(tx, pair.id, trackedAssets(pair), flat);
+  let d0 = 0n;
+  let d1 = 0n;
+  for (const d of deltas) {
+    if (d.assetId === pair.asset0Id) d0 += d.amount;
+    else if (d.assetId === pair.asset1Id) d1 += d.amount;
+  }
+  return { d0, d1, ok: unknown.length === 0 };
+}
+
+/**
+ * Reserves after each event of `pair` in block `ctx`:
+ *  - state at height h is the pool state after the LAST tx of the block that
+ *    touches the pair, so an event in that tx gets exactly the state at h;
+ *  - an event in an earlier tx gets state(h) minus the balance deltas of the
+ *    later touching txs.
+ * Invariant enforced on every call: state(h-1) + all evented deltas of the
+ * block == state(h). If it does not hold (a balance changed without events) or
+ * a tx has several events on the same pair (intermediate state not observable),
+ * the request fails with 503 instead of guessing. Never uses tip state.
+ */
+async function reservesForBlock(
+  s: Session,
+  pair: PairDef,
+  ctx: BlockCtx,
+  events: Array<{ ev: ParsedEvent; txIndex: number }>,
+): Promise<Map<ParsedEvent, Balances>> {
+  const [after, before] = await Promise.all([balancesAt(s, pair, ctx.height), balancesAt(s, pair, ctx.height - 1)]);
+  const touching: Array<{ idx: number; d0: bigint; d1: bigint; ok: boolean }> = [];
+  ctx.txs.forEach((tx, idx) => {
+    if (txMentions(tx, pair.id, ctx.flats[idx])) touching.push({ idx, ...sumDeltas(tx, ctx.flats[idx], pair) });
+  });
+  const allOk = touching.every((t) => t.ok);
+  let f0 = before[0];
+  let f1 = before[1];
+  for (const t of touching) {
+    f0 += t.d0;
+    f1 += t.d1;
+  }
+  const curveAsset1Untracked = pair.kind === "curve";
+  if (!allOk || f0 !== after[0] || (!curveAsset1Untracked && f1 !== after[1])) {
+    throw new ApiError(
+      503,
+      "reserve_reconstruction_failed",
+      `Pool balance changes in block ${ctx.height} are not fully explained by events; refusing to report reserves`,
+    );
   }
 
-  // Flat events fallback
-  for (const ev of tx.events || []) {
-    if (ev.type !== "wasm" && ev.type !== "from_contract") continue;
-    const sections = splitWasmSections(ev.attributes || []);
-    for (const section of sections) {
-      const msgIndex = Number(section.msg_index || 0);
-      out.push({ section, msgIndex, eventIndex: globalEventIndex++ });
+  const out = new Map<ParsedEvent, Balances>();
+  const perTx = new Map<number, number>();
+  for (const { txIndex } of events) perTx.set(txIndex, (perTx.get(txIndex) ?? 0) + 1);
+  for (const { ev, txIndex } of events) {
+    if ((perTx.get(txIndex) ?? 0) > 1) {
+      throw new ApiError(
+        503,
+        "ambiguous_intra_tx_reserves",
+        `Tx ${ev.txnId} has several events on one pair; intermediate reserves are not observable on-chain`,
+      );
     }
+    let r0 = after[0];
+    let r1 = after[1];
+    for (const t of touching) {
+      if (t.idx > txIndex) {
+        r0 -= t.d0;
+        if (!curveAsset1Untracked) r1 -= t.d1;
+      }
+    }
+    if (r0 < 0n || r1 < 0n) {
+      throw new ApiError(503, "reserve_reconstruction_failed", `Negative reconstructed reserve in block ${ctx.height}`);
+    }
+    out.set(ev, [r0, r1]);
   }
   return out;
 }
 
-function pickMaker(section: Record<string, string>, tx: TxResponse): string {
-  return (
-    section.sender ||
-    section.receiver ||
-    section.from ||
-    (() => {
-      const msgs = tx.tx?.body?.messages || [];
-      for (const m of msgs) {
-        if (typeof m.sender === "string") return m.sender;
-      }
-      return "unknown";
-    })()
-  );
-}
-
-async function reservesForSwap(
-  pair: ResolvedPair,
-  section: Record<string, string>,
-  siblings: Array<Record<string, string>>,
-  height: number,
-): Promise<{ r0Raw: string; r1Raw: string; source: string }> {
-  // Prefer on-event reserve0/reserve1 (managed_swap_finalized or swap attrs)
-  for (const s of [section, ...siblings]) {
-    if (
-      s._contract_address === pair.pair.id &&
-      s.reserve0 != null &&
-      s.reserve1 != null &&
-      s.reserve0 !== "0" &&
-      s.reserve1 !== "0"
-    ) {
-      return { r0Raw: s.reserve0, r1Raw: s.reserve1, source: "event" };
-    }
-  }
-  // backing_after_0 / local_cwlunc_after style — map if asset order matches
-  for (const s of siblings) {
-    if (s._contract_address !== pair.pair.id) continue;
-    if (s.backing_after_0 && s.local_cwlunc_after) {
-      // Reflective JURIS/CWLUNC: asset0=base, asset1=CWLUNC local reserve
-      return {
-        r0Raw: s.backing_after_0,
-        r1Raw: s.local_cwlunc_after,
-        source: "rebalance_attrs",
-      };
-    }
-  }
-
-  // Bonding curves: curve_info.reserve (native/asset0) + supply (CW20/asset1)
-  try {
-    const { reserve0, reserve1 } = await getPoolReserves(pair.pair.id, height);
-    return {
-      r0Raw: reserve0,
-      r1Raw: reserve1,
-      source: pair.bondingCurve ? "curve_info" : "pool_query",
-    };
-  } catch {
-    const { reserve0, reserve1 } = await getPoolReserves(pair.pair.id);
-    return {
-      r0Raw: reserve0,
-      r1Raw: reserve1,
-      source: pair.bondingCurve ? "curve_info_tip" : "pool_query_tip",
-    };
-  }
-}
-
-function buildSwapEvent(opts: {
-  pair: ResolvedPair;
-  section: Record<string, string>;
-  siblings: Array<Record<string, string>>;
-  tx: TxResponse;
-  txnIndex: number;
-  eventIndex: number;
-  r0Raw: string;
-  r1Raw: string;
-  reserveSource: string;
-}): IndexedEvent | null {
-  const { pair, section, tx, txnIndex, eventIndex, r0Raw, r1Raw } = opts;
-  const offerId = normalizeAssetAttr(section.offer_asset);
-  const askId = normalizeAssetAttr(
-    section.ask_asset || section.return_asset,
-  );
-  const offerAmount = section.offer_amount;
-  const returnAmount = section.return_amount;
-  if (!offerId || !askId || !offerAmount || !returnAmount) return null;
-  if (offerAmount === "0" || returnAmount === "0") return null;
-
-  const asset0 = pair.pair.asset0Id;
-  const asset1 = pair.pair.asset1Id;
+function render(pair: PairDef, ctx: BlockCtx, txIndex: number, ev: ParsedEvent, res: Balances): IndexedEvent {
   const d0 = pair.asset0Decimals;
   const d1 = pair.asset1Decimals;
-
-  let asset0In: string | undefined;
-  let asset1Out: string | undefined;
-  let asset1In: string | undefined;
-  let asset0Out: string | undefined;
-
-  if (offerId === asset0 && askId === asset1) {
-    asset0In = decimalize(offerAmount, d0);
-    asset1Out = decimalize(returnAmount, d1);
-  } else if (offerId === asset1 && askId === asset0) {
-    asset1In = decimalize(offerAmount, d1);
-    asset0Out = decimalize(returnAmount, d0);
-  } else {
-    // Asset id mismatch (e.g. unexpected format) — skip rather than corrupt charts
-    return null;
-  }
-
-  const reserve0 = decimalize(r0Raw, d0);
-  const reserve1 = decimalize(r1Raw, d1);
-  if (reserve0 === "0" || reserve1 === "0") {
-    // Invalid for GT — skip
-    return null;
-  }
-
-  const priceNative = priceNativeFromTrade({
-    asset0In,
-    asset1Out,
-    asset1In,
-    asset0Out,
-    reserve0,
-    reserve1,
-  });
-  if (!priceNative || priceNative === "0") return null;
-
-  const block = blockFromTx(tx);
-  const maker = pickMaker(section, tx);
-
-  const ev: IndexedEvent = {
-    block,
-    eventType: "swap",
-    txnId: tx.txhash,
-    txnIndex,
-    eventIndex,
-    maker,
-    pairId: pair.pair.id,
-    ...(asset0In != null ? { asset0In } : {}),
-    ...(asset1Out != null ? { asset1Out } : {}),
-    ...(asset1In != null ? { asset1In } : {}),
-    ...(asset0Out != null ? { asset0Out } : {}),
-    priceNative,
-    reserves: { asset0: reserve0, asset1: reserve1 },
-    metadata: {
-      reserveSource: opts.reserveSource,
-      offerAsset: offerId,
-      askAsset: askId,
-      ...(pair.bondingCurve ? { bondingCurve: "true" } : {}),
-    },
+  const head = {
+    block: { blockNumber: ctx.height, blockTimestamp: ctx.timestamp },
+    eventType: ev.eventType,
+    txnId: ev.txnId,
+    txnIndex: txIndex,
+    eventIndex: ev.eventIndex,
+    maker: ev.maker,
+    pairId: pair.id,
   };
-  return ev;
-}
-
-function buildJoinExit(opts: {
-  pair: ResolvedPair;
-  section: Record<string, string>;
-  tx: TxResponse;
-  txnIndex: number;
-  eventIndex: number;
-  eventType: "join" | "exit";
-  r0Raw: string;
-  r1Raw: string;
-}): IndexedEvent | null {
-  const { pair, section, tx, txnIndex, eventIndex, eventType, r0Raw, r1Raw } =
-    opts;
-  // Common TerraSwap attrs: assets or amount0/amount1
-  let amount0Raw = section.amount0 || section.offer_amount_0;
-  let amount1Raw = section.amount1 || section.offer_amount_1;
-
-  // assets attribute sometimes JSON array
-  if ((!amount0Raw || !amount1Raw) && section.assets) {
-    try {
-      const parsed = JSON.parse(section.assets);
-      if (Array.isArray(parsed) && parsed.length >= 2) {
-        amount0Raw = parsed[0].amount || amount0Raw;
-        amount1Raw = parsed[1].amount || amount1Raw;
-      }
-    } catch {
-      /* ignore */
-    }
+  const reserves = { asset0: decimalize(res[0], d0), asset1: decimalize(res[1], d1) };
+  if (ev.eventType === "swap") {
+    const o: Record<string, unknown> = { ...head };
+    if (ev.asset0In != null) o.asset0In = decimalize(ev.asset0In, d0);
+    if (ev.asset1In != null) o.asset1In = decimalize(ev.asset1In, d1);
+    if (ev.asset0Out != null) o.asset0Out = decimalize(ev.asset0Out, d0);
+    if (ev.asset1Out != null) o.asset1Out = decimalize(ev.asset1Out, d1);
+    o.priceNative = ev.priceNative;
+    o.reserves = reserves;
+    const meta: Record<string, string> = {};
+    if (ev.fees0In != null) meta.fees0In = decimalize(ev.fees0In, d0);
+    if (ev.fees1In != null) meta.fees1In = decimalize(ev.fees1In, d1);
+    if (ev.fees0Out != null) meta.fees0Out = decimalize(ev.fees0Out, d0);
+    if (ev.fees1Out != null) meta.fees1Out = decimalize(ev.fees1Out, d1);
+    if (Object.keys(meta).length) o.metadata = meta;
+    return o as unknown as IndexedEvent;
   }
-
-  // refund_assets / share for withdraw
-  if ((!amount0Raw || !amount1Raw) && section.refund_assets) {
-    try {
-      const parsed = JSON.parse(section.refund_assets);
-      if (Array.isArray(parsed) && parsed.length >= 2) {
-        amount0Raw = parsed[0].amount || amount0Raw;
-        amount1Raw = parsed[1].amount || amount1Raw;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (!amount0Raw || !amount1Raw) return null;
-  if (amount0Raw === "0" && amount1Raw === "0") return null;
-
-  const reserve0 = decimalize(r0Raw, pair.asset0Decimals);
-  const reserve1 = decimalize(r1Raw, pair.asset1Decimals);
-  if (reserve0 === "0" || reserve1 === "0") return null;
-
   return {
-    block: blockFromTx(tx),
-    eventType,
-    txnId: tx.txhash,
-    txnIndex,
-    eventIndex,
-    maker: pickMaker(section, tx),
-    pairId: pair.pair.id,
-    amount0: decimalize(amount0Raw, pair.asset0Decimals),
-    amount1: decimalize(amount1Raw, pair.asset1Decimals),
-    reserves: { asset0: reserve0, asset1: reserve1 },
-  };
+    ...head,
+    eventType: ev.eventType,
+    amount0: decimalize(ev.amount0 ?? 0n, d0),
+    amount1: decimalize(ev.amount1 ?? 0n, d1),
+    reserves,
+  } as IndexedEvent;
 }
 
-async function parseTxForPair(
-  pair: ResolvedPair,
-  tx: TxResponse,
-  txnIndex: number,
-): Promise<IndexedEvent[]> {
-  if (tx.code && tx.code !== 0) return [];
-  const height = Number(tx.height);
-  const items = collectWasmSections(tx);
-  const sections = items.map((i) => i.section);
-  const events: IndexedEvent[] = [];
-
-  for (const item of items) {
-    const { section, eventIndex } = item;
-    if (section._contract_address !== pair.pair.id) continue;
-    const action = (section.action || "").toLowerCase();
-
-    if (action === "swap") {
-      const { r0Raw, r1Raw, source } = await reservesForSwap(
-        pair,
-        section,
-        sections,
-        height,
-      );
-      const ev = buildSwapEvent({
-        pair,
-        section,
-        siblings: sections,
-        tx,
-        txnIndex,
-        eventIndex,
-        r0Raw,
-        r1Raw,
-        reserveSource: source,
-      });
-      if (ev) events.push(ev);
-      continue;
+/**
+ * Pick an upstream whose tip covers `toBlock`. Returns the pinned session or
+ * throws 400 if no upstream has the range yet.
+ */
+async function sessionCovering(toBlock: number): Promise<Session> {
+  const urls = getUpstreamUrls();
+  let best = -1;
+  let lastErr: unknown = null;
+  for (let i = 0; i < urls.length; i++) {
+    const s = new Session(urls.slice(i));
+    try {
+      const tip = await minTip(s, 2);
+      best = Math.max(best, tip);
+      if (toBlock <= tip - 1) return s;
+    } catch (e) {
+      lastErr = e;
     }
+  }
+  if (best < 0) throw lastErr ?? new ApiError(502, "upstream_unavailable", "Upstream node request failed after retries");
+  throw new ApiError(
+    400,
+    "range_not_available",
+    "toBlock is beyond the latest block available to /events; poll /latest-block first",
+    { latestBlock: best - LATEST_BLOCK_LAG },
+  );
+}
 
-    if (JOIN_ACTIONS.has(action) || EXIT_ACTIONS.has(action)) {
-      let r0Raw = section.reserve0;
-      let r1Raw = section.reserve1;
-      if (!r0Raw || !r1Raw) {
-        try {
-          const r = await getPoolReserves(pair.pair.id, height);
-          r0Raw = r.reserve0;
-          r1Raw = r.reserve1;
-        } catch {
-          const r = await getPoolReserves(pair.pair.id);
-          r0Raw = r.reserve0;
-          r1Raw = r.reserve1;
+export async function getEvents(fromBlock: number, toBlock: number): Promise<IndexedEvent[]> {
+  const pairs = (await listPairs()).map((p) => p.def);
+  const s = await sessionCovering(toBlock);
+  await s.block(fromBlock); // 503 height_not_available if pruned on this upstream
+
+  // 1. discovery: every tx that executed a pair contract in the range (all pages)
+  const found = await mapLimit(pairs, UPSTREAM_CONCURRENCY, (p) =>
+    s.searchTxsAll(`tx.height>=${fromBlock} AND tx.height<=${toBlock} AND wasm._contract_address='${p.id}'`),
+  );
+  const discovered = new Map<string, TxResponse>();
+  for (const list of found) {
+    for (const tx of list) {
+      const h = Number(tx.height);
+      if (h < fromBlock || h > toBlock) {
+        throw new ApiError(503, "upstream_inconsistent", "Upstream tx search returned a tx outside the range");
+      }
+      discovered.set(String(tx.txhash).toUpperCase(), tx);
+    }
+  }
+  const heights = new Set<number>();
+  const discoveredWithEvents = new Set<string>();
+  for (const [hash, tx] of discovered) {
+    if (tx.code != null && tx.code !== 0) continue;
+    const flat = flattenTxEvents(tx);
+    for (const p of pairs) {
+      if (extractWithErrors(tx, p, flat).length) {
+        heights.add(Number(tx.height));
+        discoveredWithEvents.add(hash);
+      }
+    }
+  }
+
+  // 2. per block: canonical tx order, events, reserves
+  const sortedHeights = [...heights].sort((a, b) => a - b);
+  const perBlock = await mapLimit(sortedHeights, UPSTREAM_CONCURRENCY, async (h) => {
+    const ctx = await loadBlock(s, h);
+    const byPair = new Map<string, Array<{ ev: ParsedEvent; txIndex: number }>>();
+    ctx.txs.forEach((tx, txIndex) => {
+      for (const p of pairs) {
+        for (const ev of extractWithErrors(tx, p, ctx.flats[txIndex])) {
+          if (!discoveredWithEvents.has(String(tx.txhash).toUpperCase())) {
+            throw new ApiError(503, "upstream_inconsistent", "Tx search missed a pair transaction");
+          }
+          const arr = byPair.get(p.id) ?? [];
+          arr.push({ ev, txIndex });
+          byPair.set(p.id, arr);
         }
       }
-      const ev = buildJoinExit({
-        pair,
-        section,
-        tx,
-        txnIndex,
-        eventIndex,
-        eventType: JOIN_ACTIONS.has(action) ? "join" : "exit",
-        r0Raw,
-        r1Raw,
-      });
-      if (ev) events.push(ev);
-    }
-  }
-
-  return events;
-}
-
-export async function getEvents(
-  fromBlock: number,
-  toBlock: number,
-): Promise<IndexedEvent[]> {
-  if (!Number.isFinite(fromBlock) || !Number.isFinite(toBlock)) {
-    throw Object.assign(new Error("fromBlock and toBlock are required"), {
-      status: 400,
     });
-  }
-  if (fromBlock > toBlock) {
-    throw Object.assign(new Error("fromBlock must be <= toBlock"), {
-      status: 400,
-    });
-  }
-  const span = toBlock - fromBlock;
-  if (span > MAX_EVENTS_BLOCK_SPAN) {
-    throw Object.assign(
-      new Error(
-        `Block span ${span} exceeds MAX_EVENTS_BLOCK_SPAN=${MAX_EVENTS_BLOCK_SPAN}`,
-      ),
-      { status: 400 },
-    );
-  }
-
-  const pairs = await listPairs();
-  const all: IndexedEvent[] = [];
-
-  // Query each pair in parallel (small factory set)
-  await Promise.all(
-    pairs.map(async (pair) => {
-      let txs: TxResponse[] = [];
-      try {
-        txs = await searchTxsByContractAndHeight(
-          pair.pair.id,
-          fromBlock,
-          toBlock,
-          100,
-        );
-      } catch (e) {
-        console.warn(
-          `[events] LCD search failed for ${pair.pair.id}:`,
-          (e as Error).message,
-        );
-        return;
-      }
-
-      // Stable txnIndex within height: sort by height then hash
-      txs.sort((a, b) => {
-        const ha = Number(a.height);
-        const hb = Number(b.height);
-        if (ha !== hb) return ha - hb;
-        return (a.txhash || "").localeCompare(b.txhash || "");
-      });
-
-      // txnIndex per block
-      const perBlock = new Map<number, number>();
-      for (const tx of txs) {
-        const h = Number(tx.height);
-        if (h < fromBlock || h > toBlock) continue;
-        const txnIndex = perBlock.get(h) ?? 0;
-        perBlock.set(h, txnIndex + 1);
-        const evs = await parseTxForPair(pair, tx, txnIndex);
-        all.push(...evs);
-      }
-    }),
-  );
-
-  all.sort((a, b) => {
-    if (a.block.blockNumber !== b.block.blockNumber) {
-      return a.block.blockNumber - b.block.blockNumber;
+    const rendered: IndexedEvent[] = [];
+    for (const p of pairs) {
+      const evs = byPair.get(p.id);
+      if (!evs) continue;
+      const res = await reservesForBlock(s, p, ctx, evs);
+      for (const { ev, txIndex } of evs) rendered.push(render(p, ctx, txIndex, ev, res.get(ev)!));
     }
-    if (a.txnIndex !== b.txnIndex) return a.txnIndex - b.txnIndex;
-    return a.eventIndex - b.eventIndex;
+    return rendered;
   });
 
+  const all = perBlock.flat();
+  all.sort(
+    (a, b) =>
+      a.block.blockNumber - b.block.blockNumber || a.txnIndex - b.txnIndex || a.eventIndex - b.eventIndex,
+  );
+  const keys = new Set<string>();
+  for (const e of all) {
+    const k = `${e.block.blockNumber}:${e.txnIndex}:${e.eventIndex}`;
+    if (keys.has(k)) throw new ApiError(500, "internal_error", "Duplicate event position");
+    keys.add(k);
+  }
   return all;
+}
+
+function extractWithErrors(tx: TxResponse, p: PairDef, flat: FlatEvent[]): ParsedEvent[] {
+  try {
+    return extractPairEvents(tx, p, flat);
+  } catch (e) {
+    if (e instanceof ParseError) {
+      throw new ApiError(500, "unparseable_event", `Unrecognised event format in tx ${tx.txhash}`);
+    }
+    throw e;
+  }
 }

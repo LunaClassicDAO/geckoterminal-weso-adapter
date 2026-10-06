@@ -1,246 +1,190 @@
 import {
   BONDING_CURVES,
-  BONDING_CURVE_IDS,
   DEX_KEY,
   EXCLUDED_PAIR_TYPES,
   FACTORY,
+  NATIVE_ASSETS,
   PAIR_CACHE_TTL_MS,
 } from "./config.js";
-import { querySmart } from "./lcd.js";
-import { getAsset } from "./assets.js";
-import type { FactoryPair, Pair, PoolAsset } from "./types.js";
-import { assetIdFromInfo, pairTypeKey, safeSymbol } from "./utils.js";
+import { rateToBps } from "./decimal.js";
+import type { PairDef } from "./parse.js";
+import type { FactoryPair, Pair } from "./types.js";
+import { ApiError, Session } from "./upstream.js";
+import { assetIdFromInfo, pairTypeKey } from "./utils.js";
+
+export interface ResolvedPair {
+  pair: Pair;
+  def: PairDef;
+}
 
 interface PairCache {
   at: number;
-  byId: Map<string, ResolvedPair>;
   list: ResolvedPair[];
-}
-
-export interface ResolvedPair {
-  factory?: FactoryPair;
-  pair: Pair;
-  asset0Decimals: number;
-  asset1Decimals: number;
-  pairType: string;
-  /** True for $WESO / $reBASE cw20 bonding curves (not factory AMM). */
-  bondingCurve?: boolean;
+  byId: Map<string, ResolvedPair>;
 }
 
 let cache: PairCache | null = null;
+let inflight: Promise<PairCache> | null = null;
 
-async function loadBondingCurvePairs(): Promise<ResolvedPair[]> {
-  const out: ResolvedPair[] = [];
-  for (const def of BONDING_CURVES) {
-    const asset0Id = def.reserveDenom;
-    const asset1Id = def.id;
-    const a0 = await getAsset(asset0Id);
-    const a1 = await getAsset(asset1Id);
-    const d0 = a0.decimals;
-    const d1 = a1.decimals;
-
-    // Prefer live token_info symbol if override/query succeeded
-    const tokenSymbol = a1.symbol || def.symbol;
-    const nativeSymbol = a0.symbol;
-    // asset0 = native → name NATIVE/TOKEN (e.g. LUNC/WESO, USTC/reBASE)
-    const name = safeSymbol(nativeSymbol, tokenSymbol);
-
-    const pair: Pair = {
-      id: def.id,
-      dexKey: DEX_KEY,
-      asset0Id,
-      asset1Id,
-      name,
-      feeBps: def.feeBps,
-      metadata: {
-        pairType: "cw20_bonding",
-        bondingCurve: "true",
-        reserveDenom: def.reserveDenom,
-        note: "commission_amount=0; project_tax ~1% separate from feeBps",
-      },
-    };
-
-    out.push({
-      pair,
-      asset0Decimals: d0,
-      asset1Decimals: d1,
-      pairType: "cw20_bonding",
-      bondingCurve: true,
-    });
-  }
-  return out;
+interface TokenInfo {
+  name: string;
+  symbol: string;
+  decimals: number;
+  total_supply: string;
 }
 
-async function loadPairs(force = false): Promise<PairCache> {
+export async function tokenInfo(s: Session, id: string): Promise<TokenInfo> {
+  const info = await s.smart<TokenInfo>(id, { token_info: {} });
   if (
-    !force &&
-    cache &&
-    Date.now() - cache.at < PAIR_CACHE_TTL_MS &&
-    cache.list.length
+    typeof info?.symbol !== "string" ||
+    !info.symbol ||
+    typeof info.name !== "string" ||
+    !Number.isInteger(info.decimals)
   ) {
-    return cache;
+    throw new ApiError(502, "upstream_bad_response", "Token returned malformed token_info");
+  }
+  return info;
+}
+
+async function symbolAndDecimals(s: Session, id: string): Promise<{ symbol: string; decimals: number }> {
+  const n = NATIVE_ASSETS[id];
+  if (n) return { symbol: n.symbol, decimals: n.decimals };
+  if (!id.startsWith("terra1")) {
+    throw new ApiError(502, "unsupported_asset", "Pair references an unsupported asset type");
+  }
+  const t = await tokenInfo(s, id);
+  return { symbol: t.symbol, decimals: t.decimals };
+}
+
+async function loadFactoryPairs(s: Session): Promise<ResolvedPair[]> {
+  const all: FactoryPair[] = [];
+  for (;;) {
+    const query: { pairs: { limit: number; start_after?: unknown } } = { pairs: { limit: 30 } };
+    if (all.length) query.pairs.start_after = all[all.length - 1].asset_infos;
+    const { pairs } = await s.smart<{ pairs: FactoryPair[] }>(FACTORY, query);
+    if (!Array.isArray(pairs)) throw new ApiError(502, "upstream_bad_response", "Factory returned malformed pairs");
+    if (!pairs.length) break;
+    all.push(...pairs);
+    if (all.length > 10_000) throw new ApiError(502, "upstream_bad_response", "Factory pagination did not terminate");
   }
 
-  const all: FactoryPair[] = [];
-  let page: FactoryPair[];
-  do {
-    const query: { pairs: { limit: number; start_after?: unknown } } = {
-      pairs: { limit: 30 },
-    };
-    if (all.length) {
-      query.pairs.start_after = all[all.length - 1].asset_infos;
-    }
-    const { pairs } = await querySmart<{ pairs: FactoryPair[] }>(FACTORY, query);
-    if (!Array.isArray(pairs)) {
-      throw new Error("WESO factory returned a malformed pairs response");
-    }
-    page = pairs;
-    all.push(...page);
-  } while (page.length > 0);
-
-  // Exclude wrap vaults (token_bonding) and converter — not product curves.
-  const included = all.filter(
-    (p) => !EXCLUDED_PAIR_TYPES.has(pairTypeKey(p.pair_type)),
-  );
-
-  const byId = new Map<string, ResolvedPair>();
-  const list: ResolvedPair[] = [];
-
-  for (const fp of included) {
+  const out: ResolvedPair[] = [];
+  for (const fp of all) {
+    const pairType = pairTypeKey(fp.pair_type);
+    if (EXCLUDED_PAIR_TYPES.has(pairType)) continue;
     const asset0Id = assetIdFromInfo(fp.asset_infos?.[0]);
     const asset1Id = assetIdFromInfo(fp.asset_infos?.[1]);
-    if (!asset0Id || !asset1Id || !fp.contract_addr) continue;
-
-    // Prefer on-chain asset_decimals; fall back to token_info.
-    let d0 = fp.asset_decimals?.[0];
-    let d1 = fp.asset_decimals?.[1];
-    const a0 = await getAsset(asset0Id);
-    const a1 = await getAsset(asset1Id);
-    if (d0 == null) d0 = a0.decimals;
-    if (d1 == null) d1 = a1.decimals;
-
-    let feeBps = 20; // commission_rate 0.002 default
-    try {
-      const cfg = await querySmart<{ commission_rate?: string }>(
-        fp.contract_addr,
-        { config: {} },
-      );
-      if (cfg?.commission_rate != null) {
-        const rate = Number(cfg.commission_rate);
-        if (Number.isFinite(rate) && rate >= 0) {
-          feeBps = Math.round(rate * 10_000);
-        }
-      }
-    } catch {
-      /* keep default */
+    if (!asset0Id || !asset1Id || !fp.contract_addr) {
+      throw new ApiError(502, "upstream_bad_response", "Factory returned a pair without assets");
     }
-
-    const name = safeSymbol(a0.symbol, a1.symbol);
-    const pairType = pairTypeKey(fp.pair_type) || "amm";
+    const [a0, a1] = await Promise.all([symbolAndDecimals(s, asset0Id), symbolAndDecimals(s, asset1Id)]);
+    const d0 = fp.asset_decimals?.[0] ?? a0.decimals;
+    const d1 = fp.asset_decimals?.[1] ?? a1.decimals;
+    if (d0 !== a0.decimals || d1 !== a1.decimals) {
+      throw new ApiError(502, "upstream_inconsistent", "Pair asset_decimals disagree with token_info");
+    }
+    const cfg = await s.smart<{ commission_rate?: string }>(fp.contract_addr, { config: {} });
+    if (typeof cfg?.commission_rate !== "string") {
+      throw new ApiError(502, "upstream_bad_response", "Pair config has no commission_rate");
+    }
+    const feeBps = rateToBps(cfg.commission_rate);
     const pair: Pair = {
       id: fp.contract_addr,
       dexKey: DEX_KEY,
       asset0Id,
       asset1Id,
-      name,
+      name: `${a0.symbol}/${a1.symbol}`,
       feeBps,
       metadata: {
         pairType,
         factory: FACTORY,
         liquidityToken: fp.liquidity_token || "",
+        commissionRate: cfg.commission_rate,
       },
     };
-
-    const resolved: ResolvedPair = {
-      factory: fp,
+    out.push({
       pair,
-      asset0Decimals: d0,
-      asset1Decimals: d1,
-      pairType,
+      def: { id: fp.contract_addr, asset0Id, asset1Id, asset0Decimals: d0, asset1Decimals: d1, kind: "amm" },
+    });
+  }
+  return out;
+}
+
+async function loadCurves(s: Session): Promise<ResolvedPair[]> {
+  const out: ResolvedPair[] = [];
+  for (const c of BONDING_CURVES) {
+    const native = NATIVE_ASSETS[c.reserveDenom];
+    const tok = await tokenInfo(s, c.id);
+    const params = await s.smart<{ project_tax_pct?: number }>(c.id, { param_info: {} });
+    if (!Number.isInteger(params?.project_tax_pct)) {
+      throw new ApiError(502, "upstream_bad_response", "Curve param_info has no project_tax_pct");
+    }
+    // project_tax_pct is per-mille (the pool split fields sum to 1000): 10 = 1% = 100 bps
+    const feeBps = (params.project_tax_pct as number) * 10;
+    const pair: Pair = {
+      id: c.id,
+      dexKey: DEX_KEY,
+      asset0Id: c.reserveDenom,
+      asset1Id: c.id,
+      name: `${native.symbol}/${tok.symbol}`,
+      feeBps,
+      metadata: {
+        pairType: "cw20_bonding",
+        reserveDenom: c.reserveDenom,
+        projectTaxPerMille: String(params.project_tax_pct),
+        reserves:
+          "asset0 = native bank balance of the curve contract; asset1 = 0 (curve tokens are minted/burned on trade, none are pooled)",
+      },
     };
-    byId.set(fp.contract_addr, resolved);
-    list.push(resolved);
+    out.push({
+      pair,
+      def: {
+        id: c.id,
+        asset0Id: c.reserveDenom,
+        asset1Id: c.id,
+        asset0Decimals: native.decimals,
+        asset1Decimals: tok.decimals,
+        kind: "curve",
+      },
+    });
   }
-
-  // Append product bonding curves as first-class pairs (v1).
-  for (const curve of await loadBondingCurvePairs()) {
-    byId.set(curve.pair.id, curve);
-    list.push(curve);
-  }
-
-  cache = { at: Date.now(), byId, list };
-  return cache;
+  return out;
 }
 
-/** All GT pairs: factory AMM (reflective/cumulative) + product bonding curves. */
+async function load(): Promise<PairCache> {
+  const s = new Session();
+  const list = [...(await loadFactoryPairs(s)), ...(await loadCurves(s))];
+  const byId = new Map(list.map((p) => [p.pair.id, p] as const));
+  return { at: Date.now(), list, byId };
+}
+
+async function getCache(): Promise<PairCache> {
+  if (cache && Date.now() - cache.at < PAIR_CACHE_TTL_MS) return cache;
+  if (!inflight) {
+    inflight = load()
+      .then((c) => {
+        cache = c;
+        return c;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+  }
+  return inflight;
+}
+
+/** All GT pairs: factory AMM pairs (reflective/cumulative) + product bonding curves. */
 export async function listPairs(): Promise<ResolvedPair[]> {
-  return (await loadPairs()).list;
-}
-
-/** @deprecated alias — prefer listPairs */
-export async function listAmmPairs(): Promise<ResolvedPair[]> {
-  return listPairs();
+  return (await getCache()).list;
 }
 
 export async function getPair(id: string): Promise<ResolvedPair> {
-  const c = await loadPairs();
-  const hit = c.byId.get(id);
-  if (!hit) {
-    const reason = BONDING_CURVE_IDS.has(id)
-      ? `Unknown pair: ${id}`
-      : `Unknown or excluded pair: ${id}`;
-    throw Object.assign(new Error(reason), { status: 404 });
-  }
+  const hit = (await getCache()).byId.get(id);
+  if (!hit) throw new ApiError(404, "not_found", "Unknown or excluded pair");
   return hit;
 }
 
-export interface CurveInfo {
-  reserve: string;
-  supply: string;
-  spot_price?: string;
-  reserve_denom?: string;
-  tax_collected?: string;
-}
-
-export async function getCurveReserves(
-  curveId: string,
-  height?: number,
-): Promise<{ reserve0: string; reserve1: string }> {
-  const info = await querySmart<CurveInfo>(curveId, { curve_info: {} }, height);
-  // asset0 = native reserve, asset1 = circulating curve supply (CW20 minted)
-  return {
-    reserve0: info.reserve || "0",
-    reserve1: info.supply || "0",
-  };
-}
-
-export async function getPoolReserves(
-  pairId: string,
-  height?: number,
-): Promise<{ reserve0: string; reserve1: string }> {
-  const resolved = await getPair(pairId);
-
-  if (resolved.bondingCurve || BONDING_CURVE_IDS.has(pairId)) {
-    return getCurveReserves(pairId, height);
-  }
-
-  const pool = await querySmart<{ assets: PoolAsset[] }>(
-    pairId,
-    { pool: {} },
-    height,
-  );
-  const assets = pool.assets || [];
-  // Map by asset id to preserve pair asset0/asset1 order
-  const amounts = new Map<string, string>();
-  for (const a of assets) {
-    const id = assetIdFromInfo(a.info);
-    if (id) amounts.set(id, a.amount || "0");
-  }
-  const r0 = amounts.get(resolved.pair.asset0Id) || "0";
-  const r1 = amounts.get(resolved.pair.asset1Id) || "0";
-  return { reserve0: r0, reserve1: r1 };
-}
-
-export function invalidatePairCache(): void {
-  cache = null;
+/** Test hook. */
+export function setPairsForTest(list: ResolvedPair[] | null): void {
+  cache = list ? { at: Number.MAX_SAFE_INTEGER / 2, list, byId: new Map(list.map((p) => [p.pair.id, p])) } : null;
 }
