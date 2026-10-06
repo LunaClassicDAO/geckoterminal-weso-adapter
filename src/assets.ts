@@ -14,6 +14,11 @@ const cache = new Map<string, CacheEntry>();
  * coinGeckoId is only set for the two native denoms whose CoinGecko ids are
  * unambiguous (uluna -> terra-luna, uusd -> terrausd).
  */
+/** Test hook. */
+export function clearAssetCacheForTest(): void {
+  cache.clear();
+}
+
 export async function getAsset(id: string): Promise<Asset> {
   const hit = cache.get(id);
   if (hit && Date.now() - hit.at < ASSET_CACHE_TTL_MS) return hit.asset;

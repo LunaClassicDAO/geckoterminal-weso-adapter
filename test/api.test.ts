@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, test } from "node:test";
+import { clearAssetCacheForTest } from "../src/assets.js";
 import { setPairsForTest } from "../src/pairs.js";
 import { configureUpstream } from "../src/upstream.js";
 import { fixtureJson, loadRecording, replayTransport } from "./helpers.js";
@@ -21,6 +22,7 @@ after(() => server.close());
 beforeEach(() => {
   configureUpstream({ transport: replayTransport(loadRecording("curve-buy-sell")), urls: ["https://lcd.example"], backoffMs: 0, attempts: 2 });
   setPairsForTest(null);
+  clearAssetCacheForTest();
 });
 
 async function get(path: string) {
@@ -97,4 +99,19 @@ test("GET /pair: curve feeBps from on-chain project_tax_pct, AMM feeBps from com
   assert.equal(juris.body.pair.name, "JURIS/cwLUNC");
   const vault = await get("/pair?id=terra10fusc7487y4ju2v5uavkauf3jdpxx9h8sc7wsqdqg4rne8t4qyrq8385q6");
   assert.equal(vault.status, 404, "wrap vault (token_bonding) is excluded");
+});
+
+test("misconfigured upstream answering 4xx HTML -> 502 upstream_bad_response, nothing leaked", async () => {
+  configureUpstream({
+    transport: async () => ({ status: 404, text: "<!doctype html><title>Example Domain</title> https://wrong-host.example" }),
+    urls: ["https://wrong-host.example"],
+    backoffMs: 0,
+    attempts: 2,
+  });
+  for (const p of ["/events?fromBlock=30710200&toBlock=30710310", "/latest-block", "/pair?id=uluna", "/asset?id=uluna", "/health"]) {
+    const r = await get(p);
+    assert.equal(r.status, 502, p);
+    assert.ok(["upstream_bad_response", "upstream_unavailable"].includes(r.body.code), `${p} ${r.body.code}`);
+    assert.ok(!/https?:|wrong-host|doctype/i.test(JSON.stringify(r.body)), p);
+  }
 });

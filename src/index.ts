@@ -6,7 +6,7 @@ import { BONDING_CURVES, DEX_KEY, FACTORY, MAX_EVENTS_BLOCK_SPAN, PORT, ROUTER }
 import { getAsset } from "./assets.js";
 import { getPair, listPairs } from "./pairs.js";
 import { getEvents, getLatestBlock, parseRange } from "./events.js";
-import { ApiError } from "./upstream.js";
+import { ApiError, UpstreamClientError } from "./upstream.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -16,6 +16,12 @@ app.use(cors());
 function sendError(res: Response, e: unknown): void {
   if (e instanceof ApiError) {
     res.status(e.status).json({ error: e.message, code: e.code, ...e.extra });
+    return;
+  }
+  if (e instanceof UpstreamClientError) {
+    // every upstream rejected the request (misconfigured URL / incompatible node)
+    console.error("[upstream] client error", e.httpStatus);
+    res.status(502).json({ error: "Upstream node rejected the request", code: "upstream_bad_response" });
     return;
   }
   console.error("[unhandled]", e);
