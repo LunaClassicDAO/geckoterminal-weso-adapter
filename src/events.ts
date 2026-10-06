@@ -297,7 +297,9 @@ async function sessionCovering(toBlock: number): Promise<Session> {
     try {
       const tip = await minTip(s, 2);
       best = Math.max(best, tip);
-      if (toBlock <= tip - 1) return s;
+      // same safety lag as /latest-block: a load-balanced backend lagging a few
+      // blocks behind must not be able to silently omit txs from tx search
+      if (toBlock <= tip - LATEST_BLOCK_LAG) return s;
     } catch (e) {
       lastErr = e;
     }
