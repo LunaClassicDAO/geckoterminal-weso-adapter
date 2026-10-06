@@ -88,7 +88,12 @@ export function configureUpstream(opts: {
   if (opts.attempts != null) attemptsPerUpstream = opts.attempts;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Sleep for the configured exponential backoff of retry `attempt` (1-based). */
+export function backoff(attempt: number): Promise<void> {
+  return sleep(Math.min(backoffMs * 2 ** (attempt - 1), UPSTREAM_BACKOFF_MAX_MS));
+}
 
 function isRetriableStatus(s: number): boolean {
   return s === 429 || s >= 500;
@@ -138,7 +143,7 @@ export class Session {
         } catch (e) {
           lastErr = e;
         }
-        if (attempt < attemptsPerUpstream) await sleep(Math.min(backoffMs * 2 ** (attempt - 1), UPSTREAM_BACKOFF_MAX_MS));
+        if (attempt < attemptsPerUpstream) await backoff(attempt);
       }
       console.warn(
         `[upstream] #${u} failed for ${pathAndQuery.split("?")[0]}${height != null ? `@${height}` : ""}: ${

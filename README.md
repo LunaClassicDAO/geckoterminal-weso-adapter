@@ -76,6 +76,7 @@ referenced id, and repeats the range to confirm byte-identical output.
 | `UPSTREAM_ATTEMPTS` | `8` | Attempts per upstream (exponential backoff) before fail-over |
 | `UPSTREAM_BACKOFF_MS` | `250` | Base backoff |
 | `UPSTREAM_BACKOFF_MAX_MS` | `2000` | Backoff cap per attempt |
+| `RESERVE_CONSISTENCY_ATTEMPTS` | `4` | Re-reads of a block's at-height balances when the reserve invariant fails (then 503) |
 | `UPSTREAM_CONCURRENCY` | `6` | Parallel upstream calls per `/events` request |
 | `PAIR_CACHE_TTL_MS` / `ASSET_CACHE_TTL_MS` | `300000` / `600000` | Metadata caches |
 

@@ -147,7 +147,9 @@ amounts = `refund_assets` (paid out).
 - If the event's tx is the last tx of the block that touches the pair, reserves = balances at height h. If later
   txs in the same block touch the pair, their exact balance deltas (bank `coin_received`/`coin_spent`, CW20
   `transfer`/`send`/`transfer_from`/`send_from`/`burn`/`burn_from`/`mint`) are subtracted. Every block is
-  checked: balances(h−1) + all evented deltas == balances(h); otherwise the request fails (503).
+  checked: balances(h−1) + all evented deltas == balances(h). A mismatch is re-read a few times (some public
+  LCD backends intermittently ignore `x-cosmos-block-height` and answer with tip state — the check catches
+  that); if it still fails, the request fails (503) rather than reporting unverified reserves.
 
 ---
 

@@ -54,6 +54,15 @@ export const UPSTREAM_ATTEMPTS = intEnv("UPSTREAM_ATTEMPTS", 8, 1);
 /** Base backoff (ms); attempt n waits min(base * 2^(n-1), UPSTREAM_BACKOFF_MAX_MS). */
 export const UPSTREAM_BACKOFF_MS = intEnv("UPSTREAM_BACKOFF_MS", 250);
 export const UPSTREAM_BACKOFF_MAX_MS = intEnv("UPSTREAM_BACKOFF_MAX_MS", 2000);
+/**
+ * Re-reads of a block's at-height balances when they fail the reserve
+ * invariant (state(h-1) + evented deltas == state(h)). Some load-balanced
+ * public LCD backends intermittently ignore x-cosmos-block-height and answer
+ * HTTP 200 with tip state (observed on publicnode 2026-10-05); the invariant
+ * detects that, and fresh reads usually land on a correct backend. If it still
+ * fails after these attempts the request returns 503.
+ */
+export const RESERVE_CONSISTENCY_ATTEMPTS = intEnv("RESERVE_CONSISTENCY_ATTEMPTS", 4, 1);
 
 /**
  * Safety lag for /latest-block: min(tip samples across all upstreams) - LAG.

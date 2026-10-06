@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { LATEST_BLOCK_LAG, LATEST_BLOCK_SAMPLES, MAX_EVENTS_BLOCK_SPAN, UPSTREAM_CONCURRENCY } from "./config.js";
+import {
+  LATEST_BLOCK_LAG,
+  LATEST_BLOCK_SAMPLES,
+  MAX_EVENTS_BLOCK_SPAN,
+  RESERVE_CONSISTENCY_ATTEMPTS,
+  UPSTREAM_CONCURRENCY,
+} from "./config.js";
 import { decimalize } from "./decimal.js";
 import {
   balanceDeltas,
@@ -13,7 +19,7 @@ import {
 } from "./parse.js";
 import { listPairs } from "./pairs.js";
 import type { Block, IndexedEvent } from "./types.js";
-import { ApiError, blockTimestamp, getUpstreamUrls, Session, type TxResponse } from "./upstream.js";
+import { ApiError, backoff, blockTimestamp, getUpstreamUrls, Session, type TxResponse } from "./upstream.js";
 
 // ------------------------------------------------------------------ helpers
 
@@ -165,7 +171,9 @@ function sumDeltas(tx: TxResponse, flat: FlatEvent[], pair: PairDef): { d0: bigi
  *  - an event in an earlier tx gets state(h) minus the balance deltas of the
  *    later touching txs.
  * Invariant enforced on every call: state(h-1) + all evented deltas of the
- * block == state(h). If it does not hold (a balance changed without events) or
+ * block == state(h). A mismatch is re-read (RESERVE_CONSISTENCY_ATTEMPTS) since
+ * some LCD backends intermittently answer at-height queries with tip state. If
+ * it still does not hold (a balance changed without events) or
  * a tx has several events on the same pair (intermediate state not observable),
  * the request fails with 503 instead of guessing. Never uses tip state.
  */
@@ -175,20 +183,35 @@ async function reservesForBlock(
   ctx: BlockCtx,
   events: Array<{ ev: ParsedEvent; txIndex: number }>,
 ): Promise<Map<ParsedEvent, Balances>> {
-  const [after, before] = await Promise.all([balancesAt(s, pair, ctx.height), balancesAt(s, pair, ctx.height - 1)]);
   const touching: Array<{ idx: number; d0: bigint; d1: bigint; ok: boolean }> = [];
   ctx.txs.forEach((tx, idx) => {
     if (txMentions(tx, pair.id, ctx.flats[idx])) touching.push({ idx, ...sumDeltas(tx, ctx.flats[idx], pair) });
   });
-  const allOk = touching.every((t) => t.ok);
-  let f0 = before[0];
-  let f1 = before[1];
+  if (!touching.every((t) => t.ok)) {
+    throw new ApiError(
+      503,
+      "reserve_reconstruction_failed",
+      `Block ${ctx.height} contains a pool balance change that cannot be attributed; refusing to report reserves`,
+    );
+  }
+  let e0 = 0n;
+  let e1 = 0n;
   for (const t of touching) {
-    f0 += t.d0;
-    f1 += t.d1;
+    e0 += t.d0;
+    e1 += t.d1;
   }
   const curveAsset1Untracked = pair.kind === "curve";
-  if (!allOk || f0 !== after[0] || (!curveAsset1Untracked && f1 !== after[1])) {
+  let after: Balances | null = null;
+  for (let attempt = 1; attempt <= RESERVE_CONSISTENCY_ATTEMPTS; attempt++) {
+    const [a, b] = await Promise.all([balancesAt(s, pair, ctx.height), balancesAt(s, pair, ctx.height - 1)]);
+    if (b[0] + e0 === a[0] && (curveAsset1Untracked || b[1] + e1 === a[1])) {
+      after = a;
+      break;
+    }
+    console.warn(`[reserves] invariant mismatch for ${pair.id} @${ctx.height} (attempt ${attempt}); re-reading`);
+    if (attempt < RESERVE_CONSISTENCY_ATTEMPTS) await backoff(attempt);
+  }
+  if (after == null) {
     throw new ApiError(
       503,
       "reserve_reconstruction_failed",

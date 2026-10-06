@@ -170,6 +170,45 @@ test("balance change not explained by events -> 503 instead of guessing reserves
   await assert.rejects(getEvents(30710200, 30710310), (e: unknown) => e instanceof ApiError && e.status === 503);
 });
 
+// Observed on mainnet (publicnode, 2026-10-05): some backends intermittently
+// ignore x-cosmos-block-height and answer HTTP 200 with TIP state. The
+// per-block invariant detects it and the balances are re-read.
+const TIP_STATE = '{"balance":{"denom":"uluna","amount":"334992729011480"}}'; // real tip value seen that day
+
+test("backend answering at-height query with tip state: detected by invariant, re-read, exact output", async () => {
+  const rec = loadRecording("curve-buy-sell");
+  const exp = fixtureJson("expected/curve-buy-sell.json");
+  const inner = replayTransport(rec);
+  const seen = new Map<string, number>();
+  use(async (base, pq, headers, t) => {
+    if (headers["x-cosmos-block-height"] != null && pq.includes("/by_denom")) {
+      const k = keyOf(pq, headers);
+      const n = (seen.get(k) ?? 0) + 1;
+      seen.set(k, n);
+      if (n === 1) return { status: 200, text: TIP_STATE };
+    }
+    return inner(base, pq, headers, t);
+  });
+  const out = await getEvents(exp.from, exp.to);
+  assert.deepEqual(out, exp.events);
+  assert.ok([...seen.values()].some((n) => n >= 2), "balances were re-read");
+});
+
+test("backend persistently answering with tip state -> 503, tip state never reported", async () => {
+  const rec = loadRecording("curve-buy-sell");
+  const inner = replayTransport(rec);
+  use(async (base, pq, headers, t) => {
+    if (headers["x-cosmos-block-height"] === "30710306" && pq.includes("/by_denom")) return { status: 200, text: TIP_STATE };
+    return inner(base, pq, headers, t);
+  });
+  await assert.rejects(getEvents(30710200, 30710310), (e: unknown) => {
+    assert.ok(e instanceof ApiError);
+    assert.equal(e.status, 503);
+    assert.equal(e.code, "reserve_reconstruction_failed");
+    return true;
+  });
+});
+
 test("tx search total/page inconsistencies -> 503", async () => {
   const rec: Recording = { ...loadRecording("juris-router") };
   const key = Object.keys(rec).find((k) => k.startsWith("/cosmos/tx/v1beta1/txs?") && k.includes("terra14jed"))!;
