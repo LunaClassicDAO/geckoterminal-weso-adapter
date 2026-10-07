@@ -1,0 +1,1695 @@
+{
+ "id": 794641369,
+ "chainId": "columbus-5",
+ "tx": {
+  "type": "core/StdTx",
+  "value": {
+   "fee": {
+    "gas": "2003705",
+    "amount": [
+     {
+      "denom": "uluna",
+      "amount": "56754950"
+     }
+    ]
+   },
+   "msg": [
+    {
+     "type": "wasm/MsgExecuteContract",
+     "value": {
+      "msg": {
+       "burn": {
+        "amount": "13110111455"
+       }
+      },
+      "funds": [],
+      "sender": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa",
+      "contract": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+     }
+    }
+   ],
+   "memo": "Vyntrex.io Swap",
+   "signatures": [
+    {
+     "pub_key": {
+      "type": "tendermint/PubKeySecp256k1",
+      "value": "A4ltjcR5UODFPAteh6bUnqOIntGi9EilmPCx0OU0Grdx"
+     },
+     "signature": "uF5JDVDCXE0STq9eNbJXM6HSEFUH0W6yWUYiH2l2G7tmKqSz5z3q/oe2tiTAAXWAK7W4l2pVJdBNhl75IglR4A=="
+    }
+   ],
+   "timeout_height": "0"
+  }
+ },
+ "logs": [
+  {
+   "log": "",
+   "events": [
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "amount",
+       "value": "56754950uluna"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "56754950uluna"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "amount",
+       "value": "56754950uluna"
+      }
+     ]
+    },
+    {
+     "type": "message",
+     "attributes": [
+      {
+       "key": "sender",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      }
+     ]
+    },
+    {
+     "type": "tx",
+     "attributes": [
+      {
+       "key": "fee",
+       "value": "56754950uluna"
+      },
+      {
+       "key": "fee_payer",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      }
+     ]
+    },
+    {
+     "type": "tx",
+     "attributes": [
+      {
+       "key": "acc_seq",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa/5060"
+      }
+     ]
+    },
+    {
+     "type": "tx",
+     "attributes": [
+      {
+       "key": "signature",
+       "value": "uF5JDVDCXE0STq9eNbJXM6HSEFUH0W6yWUYiH2l2G7tmKqSz5z3q/oe2tiTAAXWAK7W4l2pVJdBNhl75IglR4A=="
+      }
+     ]
+    },
+    {
+     "type": "message",
+     "attributes": [
+      {
+       "key": "action",
+       "value": "/cosmwasm.wasm.v1.MsgExecuteContract"
+      },
+      {
+       "key": "sender",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "module",
+       "value": "wasm"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "execute",
+     "attributes": [
+      {
+       "key": "_contract_address",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "wasm",
+     "attributes": [
+      {
+       "key": "_contract_address",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "action",
+       "value": "swap"
+      },
+      {
+       "key": "sender",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "receiver",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "offer_asset",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "ask_asset",
+       "value": "uusd"
+      },
+      {
+       "key": "offer_amount",
+       "value": "13110111455"
+      },
+      {
+       "key": "return_amount",
+       "value": "5582256722"
+      },
+      {
+       "key": "tax_amount",
+       "value": "56386431"
+      },
+      {
+       "key": "spread_amount",
+       "value": "0"
+      },
+      {
+       "key": "commission_amount",
+       "value": "0"
+      },
+      {
+       "key": "diff_amount",
+       "value": "37877937"
+      },
+      {
+       "key": "action",
+       "value": "burn"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "tax_payment",
+     "attributes": [
+      {
+       "key": "reverse_charge",
+       "value": "true"
+      },
+      {
+       "key": "tax_amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra100gz7lhvehugvauqj9zwsyjy9vjzfxvr0cdd4vgq8k3nfc4w280qskc9cg"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra100gz7lhvehugvauqj9zwsyjy9vjzfxvr0cdd4vgq8k3nfc4w280qskc9cg"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "296028uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "296028uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "296028uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "29603uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "236822uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "amount",
+       "value": "236822uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "236822uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "tax_payment",
+     "attributes": [
+      {
+       "key": "reverse_charge",
+       "value": "true"
+      },
+      {
+       "key": "tax_amount",
+       "value": "296028uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "19439222uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1j485p4zca6dlsf0ltze6elv3haqqv7s9pz7rngywsvh5k45jvkvqpm0vnd"
+      },
+      {
+       "key": "amount",
+       "value": "19439222uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1j485p4zca6dlsf0ltze6elv3haqqv7s9pz7rngywsvh5k45jvkvqpm0vnd"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "19439222uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "21145uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "169159uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "tax_payment",
+     "attributes": [
+      {
+       "key": "reverse_charge",
+       "value": "true"
+      },
+      {
+       "key": "tax_amount",
+       "value": "211449uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1hh3f6pd97n69xft4jx2540v5srp0lpq4dwl2cjzvjdkca4vrnvksw0lqy2"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1hh3f6pd97n69xft4jx2540v5srp0lpq4dwl2cjzvjdkca4vrnvksw0lqy2"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "13885158uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "126869uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "126869uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "126869uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "12687uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "101495uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "amount",
+       "value": "101495uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "101495uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "tax_payment",
+     "attributes": [
+      {
+       "key": "reverse_charge",
+       "value": "true"
+      },
+      {
+       "key": "tax_amount",
+       "value": "126869uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "8331098uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra18nc742rm8ckmad0h56pqnquug6axlcmy988mavhruha209r8msfse2agex"
+      },
+      {
+       "key": "amount",
+       "value": "8331098uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra18nc742rm8ckmad0h56pqnquug6axlcmy988mavhruha209r8msfse2agex"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "8331098uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "83733850uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "83733850uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "83733850uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8pm7utl"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1jgp27m8fykex4e4jtt0l7ze8q528ux2lh4zh0f"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "8373385uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "66987080uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "amount",
+       "value": "66987080uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"
+      },
+      {
+       "key": "sender",
+       "value": "terra17xpfvakm2amg962yls6f84z3kell8c5lkaeqfa"
+      },
+      {
+       "key": "amount",
+       "value": "66987080uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "tax_payment",
+     "attributes": [
+      {
+       "key": "reverse_charge",
+       "value": "true"
+      },
+      {
+       "key": "tax_amount",
+       "value": "83733850uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_spent",
+     "attributes": [
+      {
+       "key": "spender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "5498522872uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "coin_received",
+     "attributes": [
+      {
+       "key": "receiver",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "amount",
+       "value": "5498522872uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    },
+    {
+     "type": "transfer",
+     "attributes": [
+      {
+       "key": "recipient",
+       "value": "terra1fnytfnzmuwrp7ughe3tu0uh05mc06ce9sh23aa"
+      },
+      {
+       "key": "sender",
+       "value": "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m"
+      },
+      {
+       "key": "amount",
+       "value": "5498522872uusd"
+      },
+      {
+       "key": "msg_index",
+       "value": "0"
+      }
+     ]
+    }
+   ],
+   "msg_index": 0
+  }
+ ],
+ "height": "30154484",
+ "txhash": "AC5B7FCD43E9225121E6FE21ACDD0FE318549CFD7CF81907DA0A29744CC45065",
+ "gas_used": "1454101",
+ "timestamp": "2026-08-28T21:01:09Z",
+ "gas_wanted": "2003705"
+}

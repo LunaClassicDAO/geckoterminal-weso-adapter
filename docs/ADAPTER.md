@@ -1,177 +1,173 @@
-# WESO DeFi Network Adapter Documentation  
+# WESO DeFi Network Adapter Documentation
 ### GeckoTerminal Non-EVM Partner API — Terra Classic (columbus-5)
 
-**DEX / product:** WESO DeFi  
-**Website:** https://weso.world  
-**Chain:** Terra Classic (`columbus-5`)  
-**dexKey:** `weso-defi`
+| | |
+| --- | --- |
+| **Base URL** | `https://geckoterminal-weso-adapter.vercel.app` |
+| **GeckoTerminal network id** | `terra` |
+| **dexKey** | `weso-defi` |
+| **Chain** | Terra Classic (`columbus-5`) |
+| **DEX / product** | WESO DeFi (website: https://weso.world — website only, the API is not served from it) |
+| **Spec followed** | GeckoTerminal Integration API Standards v0.1 (Latest Block, Asset, Pair, Events) |
 
-This document describes the Network Adapter HTTP API used to index WESO DeFi on GeckoTerminal: **factory AMM** pools **and** product **cw20 bonding curves** ($WESO, $reBASE). It follows the GeckoTerminal Integration API Standards (Latest Block, Asset, Pair, Events).
+All endpoint paths below are relative to the base URL, e.g.
+`GET https://geckoterminal-weso-adapter.vercel.app/latest-block`.
+
+Stable copy of this document: `https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`
+(also served at `https://geckoterminal-weso-adapter.vercel.app/docs/ADAPTER.md`).
 
 ---
 
-## 1. Contracts
+## 1. Contracts and pairs
 
 | Role | Address |
 | --- | --- |
-| AMM Factory | `terra1veqa6znu8lfdmz9kp9v047chfmn84q5k3pacme75gl8ywmplk92q6xnq2k` |
-| AMM Router | `terra1nynrxdccq0r9ghrz0sq7tjkkh8wug0ggg4lkzsags8r9dyhf7ypqx5gsr8` |
+| AMM factory | `terra1veqa6znu8lfdmz9kp9v047chfmn84q5k3pacme75gl8ywmplk92q6xnq2k` |
+| AMM router | `terra1nynrxdccq0r9ghrz0sq7tjkkh8wug0ggg4lkzsags8r9dyhf7ypqx5gsr8` |
 | $WESO bonding curve (CW20 vs LUNC) | `terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms` |
 | $reBASE bonding curve (CW20 vs USTC) | `terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m` |
 
-### Included pairs
+**Included**
 
-**Factory AMM** (aligned with DeFiLlama AMM volume methodology):
+- Factory pairs whose `pair_type` is `reflective` or `cumulative` (asset order = on-chain `asset_infos[0]` / `[1]`).
+- The two product bonding curves. Pair id = curve contract; `asset0Id` = reserve denom (`uluna` / `uusd`), `asset1Id` = the curve's CW20 (same address as the pair).
 
-- `reflective`
-- `cumulative`
-
-**Product bonding curves** (first-class pairs in v1 — project is built on bonding curves):
-
-| Pair id (= curve contract) | asset0Id | asset1Id | name |
-| --- | --- | --- | --- |
-| $WESO curve | `uluna` | WESO contract | `LUNC/WESO` |
-| $reBASE curve | `uusd` | reBASE contract | `USTC/reBASE` |
-
-Metadata on curve pairs: `{ pairType: "cw20_bonding", bondingCurve: "true" }`.  
-`feeBps`: curve wasm `commission_amount` is `0`; documented default **`0`**. (A separate project tax ~1% appears as `tax_amount` on events and is **not** mapped into `feeBps`.)
-
-### Excluded (not DEX product pairs)
-
-Factory pair types:
-
-- `token_bonding` — native ↔ CW20 **wrap vaults** (LUNC↔CWLUNC, USTC↔CWUSTC plumbing). These are **not** the $WESO / $reBASE product curves.
-- `converter`
-
-Wrap vault contracts must **404** when used as `/pair?id=`.
-
-### Deferred (Phase 2)
-
-- Forex CLOB taker fills
+**Excluded** (not trading pools; `/pair?id=` returns 404): factory `token_bonding` wrap vaults (LUNC↔cwLUNC, USTC↔cwUSTC, 1:1 plumbing) and the `converter`. Same exclusions as the DefiLlama WESO adapter. Forex CLOB fills are not included.
 
 ---
 
-## 2. Base URL
+## 2. Endpoints
 
-```
-https://geckoterminal-weso-adapter.vercel.app
-```
-
-All paths below are relative to that API base (e.g. `GET https://geckoterminal-weso-adapter.vercel.app/latest-block`).
-
-**Stable docs URL:**
-- GitHub raw: `https://raw.githubusercontent.com/LunaClassicDAO/geckoterminal-weso-adapter/main/docs/ADAPTER.md`
-
-The adapter API is hosted standalone at **`https://geckoterminal-weso-adapter.vercel.app`**. Product website for the listing form is `https://weso.world` (website only; the API is not served from it).
-
----
-
-## 3. Endpoints
-
-### 3.1 `GET /latest-block`
-
-Returns the latest Terra Classic block the adapter can serve via `/events` (LCD tip; events are queried on-demand).
-
-**Response**
+### 2.1 `GET /latest-block`
 
 ```json
-{
-  "block": {
-    "blockNumber": 30447625,
-    "blockTimestamp": 1726617120
-  }
-}
+{ "block": { "blockNumber": 30710783, "blockTimestamp": 1791250626 } }
 ```
 
-- `blockTimestamp` is Unix seconds (not ms).
+`blockNumber` = (minimum of 3 tip samples on every configured LCD upstream) − 5. Tendermint has instant
+finality; the 5-block lag only absorbs load-balanced nodes that are a block or two apart and tx-index commit
+latency, so every height this endpoint returns is fully available to `/events` (spec: "it should not return a
+block for which /events has no data available yet"). `blockTimestamp` is that block's header time in Unix
+seconds. Any upstream failure returns 5xx (never a guessed height).
 
-### 3.2 `GET /asset?id={assetId}`
+### 2.2 `GET /asset?id={assetId}`
 
-**Asset ID rules**
-
-| Kind | `id` | Example |
+| Kind | `id` | Source |
 | --- | --- | --- |
-| Native LUNC | `uluna` | Luna Classic / LUNC / 6 decimals |
-| Native USTC | `uusd` | TerraClassicUSD / USTC / 6 decimals |
-| CW20 (wraps + curves + other) | contract address | CWLUNC, CWUSTC, WESO, reBASE |
+| Native LUNC | `uluna` | static: `Luna Classic` / `LUNC` / 6 / `coinGeckoId: terra-luna` |
+| Native USTC | `uusd` | static: `TerraClassicUSD` / `USTC` / 6 / `coinGeckoId: terrausd` |
+| CW20 | contract address | `token_info` verbatim (name, symbol, decimals, total_supply) |
 
-**Notable CW20 assets**
+Only assets that belong to a listed pair are served; anything else (including `ibc/…` denoms) is a 404.
+Examples: cwLUNC `terra10fusc7487y4ju2v5uavkauf3jdpxx9h8sc7wsqdqg4rne8t4qyrq8385q6` → name `LUNC (cw20)`,
+symbol `cwLUNC`; WESO → `WESO`.
 
-| Symbol | Decimals | Contract |
+> **USD pricing note.** All factory pairs quote in cwLUNC, which has no CoinGecko id. cwLUNC is minted 1:1
+> against LUNC by the wrap vault, but the GT spec only describes `coinGeckoId` as a source of display
+> information (image, description, circulating supply), not as a peg, so the adapter does **not** map cwLUNC
+> to `terra-luna`. USD values for the factory pairs therefore depend on how GeckoTerminal prices cwLUNC.
+
+### 2.3 `GET /pair?id={pairId}`
+
+- `dexKey` = `weso-defi`; non-empty `name` = `SYMBOL0/SYMBOL1` from on-chain symbols (e.g. `JURIS/cwLUNC`, `LUNC/WESO`).
+- AMM `feeBps` = on-chain `config.commission_rate` × 10 000 (exact decimal; e.g. 0.002 → 20, 0.01 → 100).
+- Curve `feeBps` = on-chain `param_info.project_tax_pct` (per-mille) × 10 → currently 10‰ = **100**. The
+  effective per-swap tax varies by tax zone (observed: ~0.99% on buys, 0–0.16% on sells); the exact amount of
+  every swap is reported in the event's `feesIn`/`feesOut`.
+
+### 2.4 `GET /events?fromBlock={n}&toBlock={n}`
+
+Both bounds inclusive, at most **2000 blocks** per request (`toBlock − fromBlock + 1 ≤ 2000`).
+
+**Request validation / errors** — every error is JSON `{ "error", "code", … }` and never contains upstream URLs:
+
+| Situation | Status | `code` |
 | --- | --- | --- |
-| CWLUNC | 6 | `terra10fusc7487y4ju2v5uavkauf3jdpxx9h8sc7wsqdqg4rne8t4qyrq8385q6` |
-| CWUSTC | 6 | `terra1uncwzdhxdktqpx4rj6mkuhl0ekv0raua0058rr7zgnapm9najyyqgtpf6h` |
-| WESO | 6 | `terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms` |
-| reBASE | 6 | `terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m` |
+| Param missing, repeated, not a plain non-negative integer, `fromBlock < 1`, `fromBlock > toBlock` | 400 | `invalid_params` |
+| More than 2000 blocks | 400 | `range_too_large` |
+| `toBlock` above the lagged height `/latest-block` would return now (upstream tip − `LATEST_BLOCK_LAG`) | 400 | `range_not_available` (+ `latestBlock`) |
+| `fromBlock` below the oldest block (or oldest indexed tx) retained by the upstream node | 503 | `height_not_available` (+ `lowestAvailableBlock` when the node reports it) |
+| Upstream node unreachable / 5xx / 429 after retries and fail-over | 502 | `upstream_unavailable` |
+| Every upstream rejects the request with a 4xx (misconfigured / incompatible node) | 502 | `upstream_bad_response` |
+| Upstream returned inconsistent data (tx-search totals, block contents) | 503 | `upstream_inconsistent` |
+| Pool balance change in a block not fully explained by events | 503 | `reserve_reconstruction_failed` |
+| Several events of one pair inside one tx (intermediate reserves not observable) | 503 | `ambiguous_intra_tx_reserves` |
 
-Symbols/names/decimals come from `token_info` with config overrides. Amounts elsewhere are **decimalized** (`raw / 10^decimals`).
+An empty `{"events": []}` is only ever returned for a valid, fully available range that genuinely contains no
+events. Responses for a fixed range are byte-for-byte deterministic.
 
-### 3.3 `GET /pair?id={pairId}`
+**How events are built**
 
-`pairId` is either:
+1. Tx discovery: LCD tx search `tx.height>=from AND tx.height<=to AND wasm._contract_address='<pair>'` per
+   pair, walking **every** page in ascending order and verifying the collected count against `total`.
+2. For every block that contains events: the block itself (`/cosmos/base/tendermint/v1beta1/blocks/{h}`) and
+   all of its tx results (`tx.height=h`) are loaded and must match one-to-one.
+3. `txnIndex` = the tx's position in the block (`sha256` of the raw tx bytes in `block.data.txs`).
+4. `eventIndex` = the event's position inside the tx (each non-wasm event counts 1, each contract section of a
+   wasm event counts 1), so it is unique within the tx across all pairs and increases with execution order.
+5. `maker` = the signer of the message that produced the event (`messages[msg_index].sender`, inner sender for
+   authz `MsgExec`). Router-routed swaps report the trader, not the router.
+6. Reserves (see below) are read **at the event's block height**; there is no fallback to current state.
+   At-height queries are retried with exponential backoff and fail over to the next upstream; if they still
+   fail the whole request returns 5xx so GeckoTerminal retries the range.
 
-- a **factory AMM pair** contract address, or
-- a **product bonding-curve** contract address ($WESO / $reBASE)
+**Swap amounts** (spec Scenarios A/B: `assetIn` = what the pool receives from the user, `assetOut` = curve
+output, fees in `metadata.feesIn` / `feesOut`):
 
-- `dexKey` is always `weso-defi`
-- AMM: `asset0Id` / `asset1Id` follow on-chain `asset_infos[0]` / `[1]`
-- Curves: `asset0Id` = reserve denom (`uluna` / `uusd`); `asset1Id` = the CW20 curve contract (same as pair id)
-- `name` is non-empty (`SYMBOL0/SYMBOL1`)
-- AMM `feeBps` from `commission_rate` (typically `20`); curves use documented `0`
+| Pair / direction | assetIn | assetOut | fees |
+| --- | --- | --- | --- |
+| AMM | `offer_amount` | `return_amount + commission + tax_amount + chancla_tax_amount` (== `vg` on reflective pairs) | `feesOut` = `commission + tax_amount + chancla_tax_amount` |
+| Curve buy (native → CW20) | `asset0In` = `offer_amount` (native sent) | `asset1Out` = `return_amount` (minted) | `fees0In` = `tax_amount` |
+| Curve sell / burn (CW20 → native) | `asset1In` = `offer_amount` (burned) | `asset0Out` = `return_amount + tax_amount` (native released) | `fees0Out` = `tax_amount` |
 
-### 3.4 `GET /events?fromBlock={n}&toBlock={n}`
+Curve tax handling: on buys the curve receives `offer_amount` and pays `tax_amount` out again (to tax
+recipient contracts, or back to the trader's own address, depending on the swap); on sells it releases
+`return_amount + tax_amount` to the seller. `tax_amount` is the project tax (`param_info.project_tax_pct`, 1% →
+`feeBps` 100). Terra Classic's chain burn tax on those bank transfers is a chain-level levy and is not reported as
+a DEX fee. A buy can additionally forward part of the curve's native reserve to a DAO DAO treasury contract
+(`terra17x9tpp…`) in the same tx (observed, e.g. tx `B17D2BFB…`); that forward is not charged to the trader, so it is not in the
+event amounts — it only shows up as a lower `asset0` reserve, which is read from the real bank balance.
 
-Inclusive height range. Returns swap events (and join/exit when liquidity attrs are available) for **included** factory AMM pairs **and** both product bonding curves.
+`priceNative` = asset1 per asset0 using the amounts that went through the curve math (input after `feesIn`,
+output before `feesOut`), computed with exact integer arithmetic and truncated to 50 decimals. A swap that moves
+zero of either asset cannot be priced (GT halts on `priceNative = 0`) and is omitted; its balance effect is
+contained in the next event's reserves.
 
-**Swap fields**
+**Join / exit** (factory pairs): TerraSwap-style attributes, e.g.
+`assets = "106465604543terra19ya4…, 36728932099terra10fusc…"`. Join amounts = `assets − refund_assets`; exit
+amounts = `refund_assets` (paid out).
 
-- Exactly one of (`asset0In`+`asset1Out`) or (`asset1In`+`asset0Out`)
-- `priceNative` = price of **asset0 quoted in asset1** (never `0`)
-- `reserves.asset0` / `reserves.asset1` after the swap
+**Reserves** ("pooled amount of each asset after the event"):
 
-**Bonding-curve buy/sell mapping** (mirrors DeFiLlama WESO curve volume logic):
-
-| On-chain | GT fields |
-| --- | --- |
-| Buy (native paid into curve → CW20 minted) | `asset0In` (uluna/uusd) + `asset1Out` (CW20) |
-| Sell / burn (CW20 in → native out to trader) | `asset1In` (CW20) + `asset0Out` (native) |
-
-Wasm attrs on the curve contract: `action=swap` with `offer_asset` / `ask_asset` / `offer_amount` / `return_amount`. Non-swap transfers (flywheel, `pay_miners`, plain `transfer`) are excluded.
-
-**Reserves for curves:** prefer amounts implied by the swap when present; else `curve_info.reserve` → `reserve0` (native) and `curve_info.supply` → `reserve1` (circulating CW20), so `priceNative` is never `0`.
-
-**Event discovery:** Terra Classic LCD tx search  
-`tx.height>=fromBlock AND tx.height<=toBlock AND wasm._contract_address='<pair|curve>'`,  
-parsing CosmWasm `wasm` attributes with `action=swap`.
-
----
-
-## 4. Alignment with DeFiLlama WESO volume
-
-| Llama volume source | In this GT adapter? |
-| --- | --- |
-| Factory AMM (`reflective` / `cumulative`) | **Yes** |
-| $WESO bonding-curve LUNC volume | **Yes** (pair = WESO curve) |
-| $reBASE bonding-curve USTC volume | **Yes** (pair = reBASE curve; Llama currently emphasizes WESO LUNC — both product curves are in GT v1) |
-| Forex CLOB LUNC quote taker fills | Phase 2 / deferred |
-| Wrap/unwrap & converter | **Excluded** (same as Llama) |
-
----
-
-## 5. Operational notes for GeckoTerminal Indexer
-
-- Poll `/latest-block`, then `/events?fromBlock&toBlock` in chunks (recommended ≤ 500–2000 blocks depending on activity).
-- Invalid schemas that halt indexing are avoided: no empty `pair.name`, no `priceNative=0`, decimalized amounts, stable asset0/asset1 order.
-- Upstream LCD: `https://terra-classic-lcd.publicnode.com` (configurable).
-
----
-
-## 6. Contact
-
-- Email: dao@lunaclassicdao.com  
-- Telegram: https://t.me/ClassicDAO  
-- X: @daolunaclassic  
+- Factory pairs: the pair contract's CW20 (or bank) balances of asset0/asset1, which equal `pool {}`. Read after
+  the **full** tx, i.e. after the reflective pairs' vault hydration / rebalance payouts.
+- Curves: `asset0` = the curve contract's native bank balance. `asset1` = `0`: the curve mints tokens to buyers
+  and burns them from sellers; it holds no pooled inventory of its own token that trades are filled from (its
+  `curve_info.supply` is circulating supply, not liquidity). Reporting 0 means liquidity equals the native
+  backing only and is never inflated.
+- If the event's tx is the last tx of the block that touches the pair, reserves = balances at height h. If later
+  txs in the same block touch the pair, their exact balance deltas (bank `coin_received`/`coin_spent`, CW20
+  `transfer`/`send`/`transfer_from`/`send_from`/`burn`/`burn_from`/`mint`) are subtracted. Every block is
+  checked: balances(h−1) + all evented deltas == balances(h). A mismatch is re-read a few times (some public
+  LCD backends intermittently ignore `x-cosmos-block-height` and answer with tip state — the check catches
+  that); if it still fails, the request fails (503) rather than reporting unverified reserves.
 
 ---
 
-*Document version: 1.1 — factory AMM + product bonding curves ($WESO, $reBASE) for GeckoTerminal listing.*
+## 3. Operational notes for the GeckoTerminal indexer
+
+- Poll `/latest-block`, then call `/events` with chunks of ≤ 2000 blocks.
+- The public LCD retains a limited block/tx history (lowest block ≈ 30.52M as of 2026-10-05). Requests below the
+  retained range return 503 `height_not_available`; historical backfill below that needs an archive LCD added via
+  `LCD_URLS`.
+- Upstreams: `LCD_URLS` (comma-separated, ordered fail-over); default `https://terra-classic-lcd.publicnode.com`.
+
+---
+
+## 4. Contact
+
+- Email: dao@lunaclassicdao.com
+- Telegram: https://t.me/ClassicDAO
+- X: @daolunaclassic
+
+*Document version 2.0 — spec-conformance fixes (historical reserves, txnIndex/eventIndex, maker, fees, errors).*

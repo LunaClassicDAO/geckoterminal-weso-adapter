@@ -1,0 +1,7 @@
+{
+  "name": "empty-range",
+  "from": 30710311,
+  "to": 30710320,
+  "note": "valid range with no events",
+  "events": []
+}

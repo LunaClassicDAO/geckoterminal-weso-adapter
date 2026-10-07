@@ -1,138 +1,60 @@
-import {
-  ASSET_CACHE_TTL_MS,
-  ASSET_OVERRIDES,
-  BONDING_CURVE_IDS,
-  CWLUNC,
-  CWUSTC,
-  NATIVE_ASSETS,
-} from "./config.js";
-import { querySmart } from "./lcd.js";
+import { ASSET_CACHE_TTL_MS, BONDING_CURVE_IDS, CWLUNC, CWUSTC, NATIVE_ASSETS } from "./config.js";
+import { decimalize } from "./decimal.js";
+import { listPairs, tokenInfo } from "./pairs.js";
 import type { Asset } from "./types.js";
-import { decimalize } from "./utils.js";
+import { ApiError, Session } from "./upstream.js";
 
 type CacheEntry = { at: number; asset: Asset };
 const cache = new Map<string, CacheEntry>();
 
-function overrideKind(id: string): string {
-  if (BONDING_CURVE_IDS.has(id)) return "cw20_bonding";
-  if (id === CWLUNC || id === CWUSTC) return "cw20_wrap";
-  return "cw20";
+/**
+ * Asset info straight from chain. Only assets that belong to a listed pair are
+ * served; anything else (including ibc/* denoms) is a 404 rather than made-up
+ * data. CW20 name/symbol/decimals/totalSupply come verbatim from token_info.
+ * coinGeckoId is only set for the two native denoms whose CoinGecko ids are
+ * unambiguous (uluna -> terra-luna, uusd -> terrausd).
+ */
+/** Test hook. */
+export function clearAssetCacheForTest(): void {
+  cache.clear();
 }
 
 export async function getAsset(id: string): Promise<Asset> {
-  const key = id;
-  const hit = cache.get(key);
+  const hit = cache.get(id);
   if (hit && Date.now() - hit.at < ASSET_CACHE_TTL_MS) return hit.asset;
 
-  const override = ASSET_OVERRIDES[id];
-  const native = NATIVE_ASSETS[id];
+  const pairs = await listPairs();
+  const known = pairs.some((p) => p.pair.asset0Id === id || p.pair.asset1Id === id);
+  if (!known) throw new ApiError(404, "not_found", "Unknown asset (not part of any listed pair)");
 
+  let asset: Asset;
+  const native = NATIVE_ASSETS[id];
   if (native) {
-    const asset: Asset = {
+    asset = {
       id,
       name: native.name,
       symbol: native.symbol,
       decimals: native.decimals,
-      ...(native.coinGeckoId ? { coinGeckoId: native.coinGeckoId } : {}),
+      coinGeckoId: native.coinGeckoId,
       metadata: { kind: "native", denom: id },
     };
-    cache.set(key, { at: Date.now(), asset });
-    return asset;
-  }
-
-  if (override) {
-    // Overrides are authoritative for wraps (CWLUNC/CWUSTC).
-    // Bonding curves: confirm via token_info but keep override as fallback.
-    let totalSupply: string | undefined;
-    let name = override.name;
-    let symbol = override.symbol;
-    let decimals = override.decimals;
-    try {
-      const info = await querySmart<{
-        name: string;
-        symbol: string;
-        decimals: number;
-        total_supply: string;
-      }>(id, { token_info: {} });
-      if (BONDING_CURVE_IDS.has(id)) {
-        if (info?.name) name = info.name;
-        if (info?.symbol) symbol = info.symbol;
-        if (info?.decimals != null && Number.isFinite(Number(info.decimals))) {
-          decimals = Number(info.decimals);
-        }
-      } else if (info?.decimals != null && Number.isFinite(Number(info.decimals))) {
-        // wraps: keep override symbol/name; allow decimals confirm
-        decimals = override.decimals;
-      }
-      if (info?.total_supply) {
-        totalSupply = decimalize(info.total_supply, decimals);
-      }
-    } catch {
-      /* optional — keep overrides */
+  } else if (id.startsWith("terra1")) {
+    const info = await tokenInfo(new Session(), id);
+    if (typeof info.total_supply !== "string" || !/^\d+$/.test(info.total_supply)) {
+      throw new ApiError(502, "upstream_bad_response", "Token returned malformed total_supply");
     }
-    const asset: Asset = {
+    const kind = BONDING_CURVE_IDS.has(id) ? "cw20_bonding" : id === CWLUNC || id === CWUSTC ? "cw20_wrap" : "cw20";
+    asset = {
       id,
-      name,
-      symbol,
-      decimals,
-      ...(totalSupply ? { totalSupply } : {}),
-      ...(override.coinGeckoId ? { coinGeckoId: override.coinGeckoId } : {}),
-      metadata: { kind: overrideKind(id) },
+      name: info.name,
+      symbol: info.symbol,
+      decimals: info.decimals,
+      totalSupply: decimalize(info.total_supply, info.decimals),
+      metadata: { kind },
     };
-    cache.set(key, { at: Date.now(), asset });
-    return asset;
+  } else {
+    throw new ApiError(404, "not_found", "Unsupported asset id");
   }
-
-  // CW20 / other contract
-  if (!id.startsWith("terra1") && !id.startsWith("ibc/")) {
-    throw Object.assign(new Error(`Unknown asset id: ${id}`), { status: 404 });
-  }
-
-  if (id.startsWith("ibc/")) {
-    const asset: Asset = {
-      id,
-      name: id.slice(0, 16) + "…",
-      symbol: "IBC",
-      decimals: 6,
-      metadata: { kind: "ibc" },
-    };
-    cache.set(key, { at: Date.now(), asset });
-    return asset;
-  }
-
-  const info = await querySmart<{
-    name: string;
-    symbol: string;
-    decimals: number;
-    total_supply: string;
-  }>(id, { token_info: {} });
-
-  const decimals = Number(info.decimals);
-  const asset: Asset = {
-    id,
-    name: info.name || info.symbol || id,
-    symbol: info.symbol || "UNKNOWN",
-    decimals: Number.isFinite(decimals) ? decimals : 6,
-    totalSupply: info.total_supply
-      ? decimalize(info.total_supply, Number.isFinite(decimals) ? decimals : 6)
-      : undefined,
-    metadata: { kind: BONDING_CURVE_IDS.has(id) ? "cw20_bonding" : "cw20" },
-  };
-  if (!asset.symbol) asset.symbol = "UNKNOWN";
-  if (!asset.name) asset.name = asset.symbol;
-  cache.set(key, { at: Date.now(), asset });
+  cache.set(id, { at: Date.now(), asset });
   return asset;
-}
-
-export function peekAssetDecimals(id: string, fallback = 6): number {
-  const hit = cache.get(id);
-  if (hit) return hit.asset.decimals;
-  if (NATIVE_ASSETS[id]) return NATIVE_ASSETS[id].decimals;
-  if (ASSET_OVERRIDES[id]) return ASSET_OVERRIDES[id].decimals;
-  return fallback;
-}
-
-export async function ensureAssetDecimals(id: string): Promise<number> {
-  const a = await getAsset(id);
-  return a.decimals;
 }

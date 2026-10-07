@@ -1,12 +1,29 @@
-export const PORT = Number(process.env.PORT || 8080);
+function intEnv(name: string, def: number, min = 0): number {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return def;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be a non-negative integer`);
+  const v = Number(raw);
+  if (v < min) throw new Error(`${name} must be >= ${min}`);
+  return v;
+}
 
-export const LCD_URL = (
-  process.env.LCD_URL || "https://terra-classic-lcd.publicnode.com"
-).replace(/\/$/, "");
+export const PORT = intEnv("PORT", 8080);
 
-export const FCD_URL = (
-  process.env.FCD_URL || "https://terra-classic-fcd.publicnode.com"
-).replace(/\/$/, "");
+/**
+ * Ordered list of LCD upstreams. `LCD_URLS` (comma separated) wins over the
+ * legacy single `LCD_URL`. Every request is pinned to one upstream at a time
+ * (sticky fail-over in this order); data is never mixed with tip state.
+ */
+export const LCD_URLS: string[] = (
+  process.env.LCD_URLS ||
+  process.env.LCD_URL ||
+  "https://terra-classic-lcd.publicnode.com"
+)
+  .split(",")
+  .map((s) => s.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
+if (!LCD_URLS.length) throw new Error("No LCD upstream configured");
 
 export const FACTORY =
   process.env.FACTORY ||
@@ -18,17 +35,60 @@ export const ROUTER =
 
 export const DEX_KEY = process.env.DEX_KEY || "weso-defi";
 
-export const PAIR_CACHE_TTL_MS = Number(process.env.PAIR_CACHE_TTL_MS || 300_000);
-export const ASSET_CACHE_TTL_MS = Number(process.env.ASSET_CACHE_TTL_MS || 600_000);
-export const MAX_EVENTS_BLOCK_SPAN = Number(
-  process.env.MAX_EVENTS_BLOCK_SPAN || 2000,
-);
-export const HTTP_TIMEOUT_MS = Number(process.env.HTTP_TIMEOUT_MS || 45_000);
+export const PAIR_CACHE_TTL_MS = intEnv("PAIR_CACHE_TTL_MS", 300_000);
+export const ASSET_CACHE_TTL_MS = intEnv("ASSET_CACHE_TTL_MS", 600_000);
+
+/** Max number of blocks in one /events request (toBlock - fromBlock + 1). */
+export const MAX_EVENTS_BLOCK_SPAN = intEnv("MAX_EVENTS_BLOCK_SPAN", 2000, 1);
+
+/** Per-attempt HTTP timeout. */
+export const HTTP_TIMEOUT_MS = intEnv("HTTP_TIMEOUT_MS", 20_000, 1);
+/**
+ * Attempts per upstream before failing over to the next upstream. Load-balanced
+ * public LCDs mix backends with different state-pruning windows, so an
+ * at-height query a few hours old can fail on one backend ("version does not
+ * exist") and succeed on the next request; measured up to ~20% per-request
+ * failure ~16k blocks back on publicnode, hence the generous default.
+ */
+export const UPSTREAM_ATTEMPTS = intEnv("UPSTREAM_ATTEMPTS", 8, 1);
+/** Base backoff (ms); attempt n waits min(base * 2^(n-1), UPSTREAM_BACKOFF_MAX_MS). */
+export const UPSTREAM_BACKOFF_MS = intEnv("UPSTREAM_BACKOFF_MS", 250);
+export const UPSTREAM_BACKOFF_MAX_MS = intEnv("UPSTREAM_BACKOFF_MAX_MS", 2000);
+/**
+ * Re-reads of a block's at-height balances when they fail the reserve
+ * invariant (state(h-1) + evented deltas == state(h)). Some load-balanced
+ * public LCD backends intermittently ignore x-cosmos-block-height and answer
+ * HTTP 200 with tip state (observed on publicnode 2026-10-05); the invariant
+ * detects that, and fresh reads usually land on a correct backend. If it still
+ * fails after these attempts the request returns 503.
+ */
+/**
+ * Before searching a range, the tx index is probed this many times at the
+ * first block >= fromBlock that has txs: the node's tx index can be pruned
+ * higher than its block store (observed: block 30522054 retained, its tx not
+ * searchable), and behind a load balancer each probe may hit another backend.
+ */
+export const TX_INDEX_PROBES = intEnv("TX_INDEX_PROBES", 3, 1);
+export const RESERVE_CONSISTENCY_ATTEMPTS = intEnv("RESERVE_CONSISTENCY_ATTEMPTS", 4, 1);
 
 /**
- * Match DeFiLlama WESO factory exclusions (wrap/unwrap + converter).
- * These factory `token_bonding` vaults are LUNC↔CWLUNC / USTC↔CWUSTC plumbing —
- * NOT the product bonding curves ($WESO / $reBASE) listed below.
+ * Safety lag for /latest-block: min(tip samples across all upstreams) - LAG.
+ * Tendermint has instant finality; the lag only covers load-balanced nodes that
+ * are a few blocks behind each other and tx-index commit latency.
+ */
+export const LATEST_BLOCK_LAG = intEnv("LATEST_BLOCK_LAG", 5);
+export const LATEST_BLOCK_SAMPLES = intEnv("LATEST_BLOCK_SAMPLES", 3, 1);
+
+/** Max parallel upstream requests per /events call. */
+export const UPSTREAM_CONCURRENCY = intEnv("UPSTREAM_CONCURRENCY", 6, 1);
+
+/** Tx search page size (LCD max is 100). */
+export const TX_SEARCH_PAGE_SIZE = 100;
+
+/**
+ * Factory pair types that are not trading pools: token_bonding = LUNC<->CWLUNC /
+ * USTC<->CWUSTC wrap vaults, converter = converter contract. Same exclusions as
+ * the DefiLlama WESO adapter.
  */
 export const EXCLUDED_PAIR_TYPES = new Set(["token_bonding", "converter"]);
 
@@ -37,93 +97,29 @@ export const CWLUNC =
 export const CWUSTC =
   "terra1uncwzdhxdktqpx4rj6mkuhl0ekv0raua0058rr7zgnapm9najyyqgtpf6h";
 
-/** Product cw20 bonding curves (first-class GT pairs in v1). */
+/** Product cw20_bonding curves (the curve contract is also the CW20 token). */
 export const WESO_CURVE =
   "terra13ryrrlcskwa05cd94h54c8rnztff9l82pp0zqnfvlwt77za8wjjsld36ms";
-export const REBASE_CURVE =
-  "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m";
+export const REBASE_CURVE = "terra1uewxz67jhhhs2tj97pfm2egtk7zqxuhenm4y4m";
 
 export interface BondingCurveDef {
   id: string;
-  /** Native reserve denom → asset0Id */
+  /** Native reserve denom (asset0). The curve token itself is asset1. */
   reserveDenom: string;
-  /** Display fallbacks if token_info is unreachable */
-  symbol: string;
-  name: string;
-  decimals: number;
-  /**
-   * Curve commission_amount in wasm events is 0; project_tax is separate (~1%).
-   * Documented default feeBps for GT pair schema.
-   */
-  feeBps: number;
 }
 
 export const BONDING_CURVES: BondingCurveDef[] = [
-  {
-    id: WESO_CURVE,
-    reserveDenom: "uluna",
-    symbol: "WESO",
-    name: "WESO Token",
-    decimals: 6,
-    feeBps: 0,
-  },
-  {
-    id: REBASE_CURVE,
-    reserveDenom: "uusd",
-    symbol: "reBASE",
-    name: "reBASE",
-    decimals: 6,
-    feeBps: 0,
-  },
+  { id: WESO_CURVE, reserveDenom: "uluna" },
+  { id: REBASE_CURVE, reserveDenom: "uusd" },
 ];
 
 export const BONDING_CURVE_IDS = new Set(BONDING_CURVES.map((c) => c.id));
 
-/** Known native denoms on Terra Classic (columbus-5). */
+/** Native denoms on Terra Classic (columbus-5). */
 export const NATIVE_ASSETS: Record<
   string,
-  { name: string; symbol: string; decimals: number; coinGeckoId?: string }
+  { name: string; symbol: string; decimals: number; coinGeckoId: string }
 > = {
-  uluna: {
-    name: "Luna Classic",
-    symbol: "LUNC",
-    decimals: 6,
-    coinGeckoId: "terra-luna",
-  },
-  uusd: {
-    name: "TerraClassicUSD",
-    symbol: "USTC",
-    decimals: 6,
-    coinGeckoId: "terrausd",
-  },
-};
-
-/**
- * Override CW20 symbols/names. Wrap tokens keep explorer-facing contract IDs.
- * Product curves use token_info when available; overrides ensure stable symbols.
- */
-export const ASSET_OVERRIDES: Record<
-  string,
-  { name: string; symbol: string; decimals: number; coinGeckoId?: string }
-> = {
-  [CWLUNC]: {
-    name: "Wrapped LUNC (CW20)",
-    symbol: "CWLUNC",
-    decimals: 6,
-  },
-  [CWUSTC]: {
-    name: "Wrapped USTC (CW20)",
-    symbol: "CWUSTC",
-    decimals: 6,
-  },
-  [WESO_CURVE]: {
-    name: "WESO Token",
-    symbol: "WESO",
-    decimals: 6,
-  },
-  [REBASE_CURVE]: {
-    name: "reBASE",
-    symbol: "reBASE",
-    decimals: 6,
-  },
+  uluna: { name: "Luna Classic", symbol: "LUNC", decimals: 6, coinGeckoId: "terra-luna" },
+  uusd: { name: "TerraClassicUSD", symbol: "USTC", decimals: 6, coinGeckoId: "terrausd" },
 };
