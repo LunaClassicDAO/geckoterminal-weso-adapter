@@ -167,6 +167,12 @@ amounts = `refund_assets` (paid out).
 
 ## 3. Operational notes for the GeckoTerminal indexer
 
+- **Recommended start block: `30151000`** (≈ 2026-08-28). Every block from there to the tip has been scanned
+  with zero errors. Earlier history is not suitable for backfill: public nodes keep nothing below ≈ 28.1M, block
+  28,200,114 has a duplicated tx that breaks the node tx index, and pairs ran older contract versions (last
+  upgrades at 30.07–30.15M) whose events this adapter does not parse.
+- **Quote asset cwLUNC** (`terra10fusc7487y4ju2v5uavkauf3jdpxx9h8sc7wsqdqg4rne8t4qyrq8385q6`) is minted 1:1
+  against native LUNC (`uluna`) by the wrap vault; please price it at par with LUNC.
 - Poll `/latest-block`, then call `/events` with chunks of ≤ 2000 blocks.
 - Public LCDs retain a limited block/tx history (publicnode ≈ 30.52M, stakely ≈ 28.1M as of 2026-10-07; state
   for reserves may be pruned higher). A range is served by the first upstream that retains it; below every
