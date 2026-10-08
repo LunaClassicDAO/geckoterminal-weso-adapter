@@ -9,19 +9,43 @@ function intEnv(name: string, def: number, min = 0): number {
 
 export const PORT = intEnv("PORT", 8080);
 
+/** Primary public LCD (load-balanced; does not echo x-cosmos-block-height). */
+export const DEFAULT_PRIMARY_LCD = "https://terra-classic-lcd.publicnode.com";
 /**
- * Ordered list of LCD upstreams. `LCD_URLS` (comma separated) wins over the
- * legacy single `LCD_URL`. Every request is pinned to one upstream at a time
- * (sticky fail-over in this order); data is never mixed with tip state.
+ * Backup LCDs, tried in this order after the primary. Both answered at-height
+ * queries correctly in mainnet checks on 2026-10-07 and echo the served height in
+ * `x-cosmos-block-height`, so a wrong-height answer is detected and failed over.
+ * stakely also retains a much deeper block / tx history (lowest block ~28.1M).
  */
-export const LCD_URLS: string[] = (
-  process.env.LCD_URLS ||
-  process.env.LCD_URL ||
-  "https://terra-classic-lcd.publicnode.com"
-)
-  .split(",")
-  .map((s) => s.trim().replace(/\/+$/, ""))
-  .filter(Boolean);
+export const DEFAULT_BACKUP_LCDS = [
+  "https://terraclassic-lcd-server-01.stakely.io",
+  "https://lcd.terra-classic.hexxagon.io",
+];
+
+function normUrls(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+/**
+ * Ordered list of LCD upstreams.
+ *  - `LCD_URLS` (comma separated) set: used verbatim, nothing appended.
+ *  - otherwise: legacy single `LCD_URL` (or the public default) followed by
+ *    DEFAULT_BACKUP_LCDS, de-duplicated. Existing deployments that only set
+ *    `LCD_URL` therefore also get the backups.
+ * Non-height reads are pinned to one upstream at a time (sticky fail-over in
+ * this order, wrapping around); at-height reads are verified and may be
+ * served by any upstream. Data is never mixed with tip state.
+ */
+export function resolveLcdUrls(env: Record<string, string | undefined>): string[] {
+  if (env.LCD_URLS && env.LCD_URLS.trim()) return [...new Set(normUrls(env.LCD_URLS))];
+  const primary = normUrls(env.LCD_URL || DEFAULT_PRIMARY_LCD);
+  return [...new Set([...primary, ...DEFAULT_BACKUP_LCDS])];
+}
+
+export const LCD_URLS: string[] = resolveLcdUrls(process.env);
 
 if (!LCD_URLS.length) throw new Error("No LCD upstream configured");
 
@@ -78,6 +102,12 @@ export const RESERVE_CONSISTENCY_ATTEMPTS = intEnv("RESERVE_CONSISTENCY_ATTEMPTS
  */
 export const LATEST_BLOCK_LAG = intEnv("LATEST_BLOCK_LAG", 5);
 export const LATEST_BLOCK_SAMPLES = intEnv("LATEST_BLOCK_SAMPLES", 3, 1);
+/**
+ * An upstream whose tip is more than this many blocks behind the highest tip
+ * seen is treated as stale: ignored by /latest-block (so one stuck node cannot
+ * freeze indexing) and never used to serve /events tx searches.
+ */
+export const UPSTREAM_MAX_TIP_LAG = intEnv("UPSTREAM_MAX_TIP_LAG", 30);
 
 /** Max parallel upstream requests per /events call. */
 export const UPSTREAM_CONCURRENCY = intEnv("UPSTREAM_CONCURRENCY", 6, 1);

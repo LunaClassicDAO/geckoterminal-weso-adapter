@@ -6,7 +6,7 @@ import { BONDING_CURVES, DEX_KEY, FACTORY, MAX_EVENTS_BLOCK_SPAN, PORT, ROUTER }
 import { getAsset } from "./assets.js";
 import { getPair, listPairs } from "./pairs.js";
 import { getEvents, getLatestBlock, parseRange } from "./events.js";
-import { ApiError, UpstreamClientError } from "./upstream.js";
+import { ApiError, getUpstreamUrls, UpstreamClientError } from "./upstream.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -50,6 +50,7 @@ app.get("/health", async (_req, res) => {
       pairCount: pairs.length,
       ammPairCount: pairs.filter((p) => p.def.kind === "amm").length,
       bondingCurvePairCount: pairs.filter((p) => p.def.kind === "curve").length,
+      upstreamCount: getUpstreamUrls().length, // count only: upstream URLs are never exposed
       latestBlock: block,
     });
   } catch (e) {

@@ -44,11 +44,13 @@ Stable copy of this document: `https://raw.githubusercontent.com/LunaClassicDAO/
 { "block": { "blockNumber": 30710783, "blockTimestamp": 1791250626 } }
 ```
 
-`blockNumber` = (minimum of 3 tip samples on every configured LCD upstream) − 5. Tendermint has instant
+`blockNumber` = (minimum of 3 tip samples on every reachable LCD upstream whose tip is within
+`UPSTREAM_MAX_TIP_LAG` = 30 blocks of the best one) − 5. Tendermint has instant
 finality; the 5-block lag only absorbs load-balanced nodes that are a block or two apart and tx-index commit
 latency, so every height this endpoint returns is fully available to `/events` (spec: "it should not return a
 block for which /events has no data available yet"). `blockTimestamp` is that block's header time in Unix
-seconds. Any upstream failure returns 5xx (never a guessed height).
+seconds. If no upstream answers the request returns 5xx (never a guessed height); a single unreachable or stuck
+backup is ignored.
 
 ### 2.2 `GET /asset?id={assetId}`
 
@@ -86,12 +88,11 @@ Both bounds inclusive, at most **2000 blocks** per request (`toBlock − fromBlo
 | Param missing, repeated, not a plain non-negative integer, `fromBlock < 1`, `fromBlock > toBlock` | 400 | `invalid_params` |
 | More than 2000 blocks | 400 | `range_too_large` |
 | `toBlock` above the lagged height `/latest-block` would return now (upstream tip − `LATEST_BLOCK_LAG`) | 400 | `range_not_available` (+ `latestBlock`) |
-| `fromBlock` below the oldest block (or oldest indexed tx) retained by the upstream node | 503 | `height_not_available` (+ `lowestAvailableBlock` when the node reports it) |
+| `fromBlock` below the oldest block (or oldest indexed tx / state) retained by every upstream node | 503 | `height_not_available` (+ `lowestAvailableBlock` = lowest block any upstream retains, when every node reports it; hint only — the tx index may start slightly higher) |
 | Upstream node unreachable / 5xx / 429 after retries and fail-over | 502 | `upstream_unavailable` |
 | Every upstream rejects the request with a 4xx (misconfigured / incompatible node) | 502 | `upstream_bad_response` |
-| Upstream returned inconsistent data (tx-search totals, block contents) | 503 | `upstream_inconsistent` |
+| Upstream returned inconsistent data (tx-search totals, block contents, every node answering at-height queries from another height) | 503 | `upstream_inconsistent` |
 | Pool balance change in a block not fully explained by events | 503 | `reserve_reconstruction_failed` |
-| Several events of one pair inside one tx (intermediate reserves not observable) | 503 | `ambiguous_intra_tx_reserves` |
 
 An empty `{"events": []}` is only ever returned for a valid, fully available range that genuinely contains no
 events. Responses for a fixed range are byte-for-byte deterministic.
@@ -108,8 +109,10 @@ events. Responses for a fixed range are byte-for-byte deterministic.
 5. `maker` = the signer of the message that produced the event (`messages[msg_index].sender`, inner sender for
    authz `MsgExec`). Router-routed swaps report the trader, not the router.
 6. Reserves (see below) are read **at the event's block height**; there is no fallback to current state.
-   At-height queries are retried with exponential backoff and fail over to the next upstream; if they still
-   fail the whole request returns 5xx so GeckoTerminal retries the range.
+   At-height queries are retried with exponential backoff and fail over to the next upstream on errors, empty
+   answers, or an echoed `x-cosmos-block-height` that differs from the requested height (stakely / hexxagon
+   echo it); if they still fail the whole request returns 5xx so GeckoTerminal retries the range. Tx search
+   and block reads are pinned to one upstream and only fail over to an upstream whose own tip covers the range.
 
 **Swap amounts** (spec Scenarios A/B: `assetIn` = what the pool receives from the user, `assetOut` = curve
 output, fees in `metadata.feesIn` / `feesOut`):
@@ -148,19 +151,30 @@ amounts = `refund_assets` (paid out).
 - If the event's tx is the last tx of the block that touches the pair, reserves = balances at height h. If later
   txs in the same block touch the pair, their exact balance deltas (bank `coin_received`/`coin_spent`, CW20
   `transfer`/`send`/`transfer_from`/`send_from`/`burn`/`burn_from`/`mint`) are subtracted. Every block is
-  checked: balances(h−1) + all evented deltas == balances(h). A mismatch is re-read a few times (some public
-  LCD backends intermittently ignore `x-cosmos-block-height` and answer with tip state — the check catches
-  that); if it still fails, the request fails (503) rather than reporting unverified reserves.
+  checked: balances(h−1) + all evented deltas == balances(h). A mismatch is re-read a few times, each time on
+  the next upstream (some public LCD backends intermittently ignore `x-cosmos-block-height` and answer with
+  tip or stale state — the check catches that); if it still fails, the request fails (503) rather than
+  reporting unverified reserves.
+- Several events of one pair in **one tx** (not observed in retained history, e.g. two swaps signed in one
+  tx): the state before the tx (= state after the tx minus its exact deltas) is the starting point and the
+  tx's balance deltas are applied in event-position order. The boundary between event k−1 and event k is
+  event k's trigger — its swap offer / native join deposit arriving at the pool, recorded just before the
+  pair's wasm section — or event k's own position when no trigger is visible (CW20 join deposits are pulled
+  after the section). Outputs, fees and payouts of event k−1 therefore stay with event k−1. The last event of
+  the tx equals the state after the tx, which the block check above verifies.
 
 ---
 
 ## 3. Operational notes for the GeckoTerminal indexer
 
 - Poll `/latest-block`, then call `/events` with chunks of ≤ 2000 blocks.
-- The public LCD retains a limited block/tx history (lowest block ≈ 30.52M as of 2026-10-05). Requests below the
-  retained range return 503 `height_not_available`; historical backfill below that needs an archive LCD added via
+- Public LCDs retain a limited block/tx history (publicnode ≈ 30.52M, stakely ≈ 28.1M as of 2026-10-07; state
+  for reserves may be pruned higher). A range is served by the first upstream that retains it; below every
+  upstream's history requests return 503 `height_not_available`. Deeper backfill needs an archive LCD in
   `LCD_URLS`.
-- Upstreams: `LCD_URLS` (comma-separated, ordered fail-over); default `https://terra-classic-lcd.publicnode.com`.
+- Upstreams: `LCD_URLS` (comma-separated, ordered fail-over, used verbatim). Default:
+  `https://terra-classic-lcd.publicnode.com`, then the backups `https://terraclassic-lcd-server-01.stakely.io`
+  and `https://lcd.terra-classic.hexxagon.io`. A legacy single `LCD_URL` is followed by the same backups.
 
 ---
 
@@ -170,4 +184,6 @@ amounts = `refund_assets` (paid out).
 - Telegram: https://t.me/ClassicDAO
 - X: @daolunaclassic
 
-*Document version 2.0 — spec-conformance fixes (historical reserves, txnIndex/eventIndex, maker, fees, errors).*
+*Document version 2.1 — per-event reserves for several events in one tx, backup LCDs with verified fail-over,
+retained-history hints. (2.0: spec-conformance fixes — historical reserves, txnIndex/eventIndex, maker, fees,
+errors.)*

@@ -6,13 +6,16 @@ import {
   RESERVE_CONSISTENCY_ATTEMPTS,
   TX_INDEX_PROBES,
   UPSTREAM_CONCURRENCY,
+  UPSTREAM_MAX_TIP_LAG,
 } from "./config.js";
 import { decimalize } from "./decimal.js";
 import {
   balanceDeltas,
   extractPairEvents,
   flattenTxEvents,
+  intraTxReserves,
   txMentions,
+  type Delta,
   type FlatEvent,
   type PairDef,
   type ParsedEvent,
@@ -86,15 +89,43 @@ async function minTip(s: Session, samples: number): Promise<number> {
 }
 
 /**
+ * Tip of every configured upstream (min of `samples` reads each), in parallel.
+ * Unreachable upstreams are null; upstreams more than UPSTREAM_MAX_TIP_LAG
+ * blocks behind the highest tip are reported as stale.
+ */
+export async function upstreamTips(samples: number): Promise<{ tips: Array<number | null>; stale: boolean[]; lastErr: unknown }> {
+  const urls = getUpstreamUrls();
+  let lastErr: unknown = null;
+  const tips = await Promise.all(
+    urls.map(async (url, i) => {
+      try {
+        return await minTip(new Session([url]), samples);
+      } catch (e) {
+        lastErr = e;
+        console.warn(`[latest-block] upstream #${i} unavailable`);
+        return null;
+      }
+    }),
+  );
+  const ok = tips.filter((t): t is number => t != null);
+  const max = ok.length ? Math.max(...ok) : 0;
+  const stale = tips.map((t) => t == null || max - t > UPSTREAM_MAX_TIP_LAG);
+  return { tips, stale, lastErr };
+}
+
+/**
  * Lagged latest block: min over LATEST_BLOCK_SAMPLES tip samples on every
- * configured upstream, minus LATEST_BLOCK_LAG. Any upstream failure fails the
- * request (5xx) so GT retries instead of advancing on partial information.
+ * reachable, non-stale upstream, minus LATEST_BLOCK_LAG. A single unreachable
+ * or stuck backup cannot freeze indexing; if NO upstream answers the request
+ * fails (5xx) so GT retries instead of advancing on partial information.
  */
 export async function getLatestBlock(): Promise<Block> {
-  const urls = getUpstreamUrls();
-  let m = Number.POSITIVE_INFINITY;
-  for (const url of urls) m = Math.min(m, await minTip(new Session([url]), LATEST_BLOCK_SAMPLES));
-  const height = m - LATEST_BLOCK_LAG;
+  const { tips, stale, lastErr } = await upstreamTips(LATEST_BLOCK_SAMPLES);
+  const healthy = tips.filter((t, i): t is number => t != null && !stale[i]);
+  if (!healthy.length) {
+    throw lastErr ?? new ApiError(502, "upstream_unavailable", "Upstream node request failed after retries");
+  }
+  const height = Math.min(...healthy) - LATEST_BLOCK_LAG;
   if (!Number.isSafeInteger(height) || height < 1) {
     throw new ApiError(502, "upstream_bad_response", "Upstream returned an invalid chain height");
   }
@@ -154,7 +185,11 @@ function trackedAssets(pair: PairDef): string[] {
   return pair.kind === "curve" ? [pair.asset0Id] : [pair.asset0Id, pair.asset1Id];
 }
 
-function sumDeltas(tx: TxResponse, flat: FlatEvent[], pair: PairDef): { d0: bigint; d1: bigint; ok: boolean } {
+function sumDeltas(
+  tx: TxResponse,
+  flat: FlatEvent[],
+  pair: PairDef,
+): { d0: bigint; d1: bigint; ok: boolean; deltas: Delta[] } {
   const { deltas, unknown } = balanceDeltas(tx, pair.id, trackedAssets(pair), flat);
   let d0 = 0n;
   let d1 = 0n;
@@ -162,21 +197,24 @@ function sumDeltas(tx: TxResponse, flat: FlatEvent[], pair: PairDef): { d0: bigi
     if (d.assetId === pair.asset0Id) d0 += d.amount;
     else if (d.assetId === pair.asset1Id) d1 += d.amount;
   }
-  return { d0, d1, ok: unknown.length === 0 };
+  return { d0, d1, ok: unknown.length === 0, deltas };
 }
 
 /**
  * Reserves after each event of `pair` in block `ctx`:
  *  - state at height h is the pool state after the LAST tx of the block that
- *    touches the pair, so an event in that tx gets exactly the state at h;
- *  - an event in an earlier tx gets state(h) minus the balance deltas of the
- *    later touching txs.
+ *    touches the pair, so the state after any tx T is state(h) minus the
+ *    balance deltas of the later touching txs;
+ *  - a tx with one event of the pair gets exactly the state after that tx;
+ *  - a tx with several events of the pair starts from the state before the tx
+ *    and applies its balance deltas in event-position order (intraTxReserves);
+ *    the last event of the tx again equals the state after the tx.
  * Invariant enforced on every call: state(h-1) + all evented deltas of the
- * block == state(h). A mismatch is re-read (RESERVE_CONSISTENCY_ATTEMPTS) since
- * some LCD backends intermittently answer at-height queries with tip state. If
- * it still does not hold (a balance changed without events) or
- * a tx has several events on the same pair (intermediate state not observable),
- * the request fails with 503 instead of guessing. Never uses tip state.
+ * block == state(h). A mismatch is re-read on the next upstream
+ * (RESERVE_CONSISTENCY_ATTEMPTS) since some LCD backends intermittently answer
+ * at-height queries with tip / stale state. If it still does not hold (a
+ * balance changed without events) the request fails with 503 instead of
+ * guessing. Never uses tip state.
  */
 async function reservesForBlock(
   s: Session,
@@ -184,7 +222,7 @@ async function reservesForBlock(
   ctx: BlockCtx,
   events: Array<{ ev: ParsedEvent; txIndex: number }>,
 ): Promise<Map<ParsedEvent, Balances>> {
-  const touching: Array<{ idx: number; d0: bigint; d1: bigint; ok: boolean }> = [];
+  const touching: Array<{ idx: number; d0: bigint; d1: bigint; ok: boolean; deltas: Delta[] }> = [];
   ctx.txs.forEach((tx, idx) => {
     if (txMentions(tx, pair.id, ctx.flats[idx])) touching.push({ idx, ...sumDeltas(tx, ctx.flats[idx], pair) });
   });
@@ -209,7 +247,8 @@ async function reservesForBlock(
       after = a;
       break;
     }
-    console.warn(`[reserves] invariant mismatch for ${pair.id} @${ctx.height} (attempt ${attempt}); re-reading`);
+    console.warn(`[reserves] invariant mismatch for ${pair.id} @${ctx.height} (attempt ${attempt}); re-reading on next upstream`);
+    s.rotateHeightReads();
     if (attempt < RESERVE_CONSISTENCY_ATTEMPTS) await backoff(attempt);
   }
   if (after == null) {
@@ -220,29 +259,49 @@ async function reservesForBlock(
     );
   }
 
-  const out = new Map<ParsedEvent, Balances>();
-  const perTx = new Map<number, number>();
-  for (const { txIndex } of events) perTx.set(txIndex, (perTx.get(txIndex) ?? 0) + 1);
-  for (const { ev, txIndex } of events) {
-    if ((perTx.get(txIndex) ?? 0) > 1) {
-      throw new ApiError(
-        503,
-        "ambiguous_intra_tx_reserves",
-        `Tx ${ev.txnId} has several events on one pair; intermediate reserves are not observable on-chain`,
-      );
-    }
-    let r0 = after[0];
-    let r1 = after[1];
+  /** pool state right after the whole tx `txIndex` */
+  const afterTx = (txIndex: number): Balances => {
+    let r0 = after![0];
+    let r1 = after![1];
     for (const t of touching) {
       if (t.idx > txIndex) {
         r0 -= t.d0;
         if (!curveAsset1Untracked) r1 -= t.d1;
       }
     }
-    if (r0 < 0n || r1 < 0n) {
-      throw new ApiError(503, "reserve_reconstruction_failed", `Negative reconstructed reserve in block ${ctx.height}`);
+    return [r0, r1];
+  };
+
+  const byTx = new Map<number, ParsedEvent[]>();
+  for (const { ev, txIndex } of events) {
+    const arr = byTx.get(txIndex) ?? [];
+    arr.push(ev);
+    byTx.set(txIndex, arr);
+  }
+  const out = new Map<ParsedEvent, Balances>();
+  for (const [txIndex, evs] of byTx) {
+    const end = afterTx(txIndex);
+    let per: Balances[];
+    if (evs.length === 1) {
+      per = [end];
+    } else {
+      const t = touching.find((x) => x.idx === txIndex);
+      const d0 = t?.d0 ?? 0n;
+      const d1 = curveAsset1Untracked ? 0n : (t?.d1 ?? 0n);
+      const before: Balances = [end[0] - d0, end[1] - d1];
+      per = intraTxReserves(pair, before, evs, t?.deltas ?? [], !curveAsset1Untracked);
+      const last = per[evs.reduce((bi, e, i) => (e.eventIndex > evs[bi].eventIndex ? i : bi), 0)];
+      if (last[0] !== end[0] || last[1] !== end[1]) {
+        throw new ApiError(503, "reserve_reconstruction_failed", `Intra-tx reserves do not add up in block ${ctx.height}`);
+      }
     }
-    out.set(ev, [r0, r1]);
+    evs.forEach((ev, i) => {
+      const [r0, r1] = per[i];
+      if (r0 < 0n || r1 < 0n) {
+        throw new ApiError(503, "reserve_reconstruction_failed", `Negative reconstructed reserve in block ${ctx.height}`);
+      }
+      out.set(ev, [r0, r1]);
+    });
   }
   return out;
 }
@@ -286,32 +345,83 @@ function render(pair: PairDef, ctx: BlockCtx, txIndex: number, ev: ParsedEvent, 
 }
 
 /**
- * Pick an upstream whose tip covers `toBlock`. Returns the pinned session or
- * throws 400 if no upstream has the range yet.
+ * Indices of the upstreams whose tip covers `toBlock` (tip - LATEST_BLOCK_LAG >=
+ * toBlock), in configured order. Throws 400 if no upstream has the range yet.
  */
-async function sessionCovering(toBlock: number): Promise<Session> {
+async function upstreamsCovering(toBlock: number): Promise<number[]> {
   const urls = getUpstreamUrls();
   let best = -1;
   let lastErr: unknown = null;
-  for (let i = 0; i < urls.length; i++) {
-    const s = new Session(urls.slice(i));
-    try {
-      const tip = await minTip(s, 2);
-      best = Math.max(best, tip);
-      // same safety lag as /latest-block: a load-balanced backend lagging a few
-      // blocks behind must not be able to silently omit txs from tx search
-      if (toBlock <= tip - LATEST_BLOCK_LAG) return s;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  if (best < 0) throw lastErr ?? new ApiError(502, "upstream_unavailable", "Upstream node request failed after retries");
-  throw new ApiError(
-    400,
-    "range_not_available",
-    "toBlock is beyond the latest block available to /events; poll /latest-block first",
-    { latestBlock: best - LATEST_BLOCK_LAG },
+  const covering: number[] = [];
+  const tips = await Promise.all(
+    urls.map(async (url) => {
+      try {
+        return await minTip(new Session([url]), 2);
+      } catch (e) {
+        lastErr = e;
+        return null;
+      }
+    }),
   );
+  tips.forEach((tip, i) => {
+    if (tip == null) return;
+    best = Math.max(best, tip);
+    // same safety lag as /latest-block: a load-balanced backend lagging a few
+    // blocks behind must not be able to silently omit txs from tx search
+    if (toBlock <= tip - LATEST_BLOCK_LAG) covering.push(i);
+  });
+  if (best < 0) throw lastErr ?? new ApiError(502, "upstream_unavailable", "Upstream node request failed after retries");
+  if (!covering.length) {
+    throw new ApiError(
+      400,
+      "range_not_available",
+      "toBlock is beyond the latest block available to /events; poll /latest-block first",
+      { latestBlock: best - LATEST_BLOCK_LAG },
+    );
+  }
+  return covering;
+}
+
+/**
+ * Pinned session for the range: the first covering upstream that also retains
+ * the range's blocks and tx index (so a backup with deeper history serves old
+ * ranges). Throws 503 height_not_available (with lowestAvailableBlock = the
+ * lowest block any upstream retains, when known) if none does.
+ */
+async function sessionForRange(fromBlock: number, toBlock: number): Promise<Session> {
+  const urls = getUpstreamUrls();
+  const covering = await upstreamsCovering(toBlock);
+  let firstErr: ApiError | null = null;
+  let otherErr: unknown = null;
+  let lowest: number | null = null;
+  let allReported = true;
+  for (const i of covering) {
+    try {
+      await assertRangeRetained(new Session([urls[i]]), fromBlock, toBlock);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "height_not_available") {
+        firstErr = firstErr ?? e;
+        const l = e.extra.lowestAvailableBlock;
+        if (typeof l === "number") lowest = lowest == null ? l : Math.min(lowest, l);
+        else allReported = false;
+        console.warn(`[events] upstream #${i} does not retain ${fromBlock}-${toBlock}; trying next`);
+        continue;
+      }
+      if (e instanceof ApiError && e.status >= 500) {
+        otherErr = otherErr ?? e;
+        console.warn(`[events] upstream #${i} failed the retention probe (${e.code}); trying next`);
+        continue;
+      }
+      throw e;
+    }
+    const s = new Session(urls, i);
+    s.requireTip(toBlock + LATEST_BLOCK_LAG, i);
+    return s;
+  }
+  if (!firstErr) throw otherErr;
+  const err = firstErr;
+  // hint only when every upstream reported its oldest block (a pruned tx index has no reported floor)
+  throw new ApiError(err.status, err.code, err.message, lowest != null && allReported ? { lowestAvailableBlock: lowest } : {});
 }
 
 /**
@@ -345,8 +455,7 @@ async function assertRangeRetained(s: Session, fromBlock: number, toBlock: numbe
 
 export async function getEvents(fromBlock: number, toBlock: number): Promise<IndexedEvent[]> {
   const pairs = (await listPairs()).map((p) => p.def);
-  const s = await sessionCovering(toBlock);
-  await assertRangeRetained(s, fromBlock, toBlock);
+  const s = await sessionForRange(fromBlock, toBlock);
 
   // 1. discovery: every tx that executed a pair contract in the range (all pages)
   const found = await mapLimit(pairs, UPSTREAM_CONCURRENCY, (p) =>

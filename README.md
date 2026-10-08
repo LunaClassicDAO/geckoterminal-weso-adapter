@@ -28,7 +28,7 @@ The app lives at the repository root (there is no `adapter-api/` subfolder):
 
 ```
 src/config.ts     env + constants
-src/upstream.ts   LCD client: retries, backoff, sticky fail-over, paginated tx search
+src/upstream.ts   LCD client: retries, backoff, sticky fail-over with wrap-around, verified at-height reads, paginated tx search
 src/parse.ts      pure tx -> GT event parsing + balance deltas (unit tested on real txs)
 src/events.ts     /events + /latest-block orchestration (txnIndex, reserves at height)
 src/pairs.ts      factory pairs + bonding curves (feeBps from chain)
@@ -66,11 +66,12 @@ referenced id, and repeats the range to confirm byte-identical output.
 | Var | Default | Notes |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP port |
-| `LCD_URLS` | `https://terra-classic-lcd.publicnode.com` | Comma-separated LCD upstreams, ordered fail-over (falls back to legacy `LCD_URL`) |
+| `LCD_URLS` | publicnode, stakely, hexxagon | Comma-separated LCD upstreams, ordered fail-over, used verbatim. Unset: legacy `LCD_URL` (or publicnode) followed by the stakely + hexxagon backups |
+| `UPSTREAM_MAX_TIP_LAG` | `30` | Upstream more than this many blocks behind the best tip is ignored by `/latest-block` and never serves tx search |
 | `FACTORY` / `ROUTER` | see table | Override only for forks/tests |
 | `DEX_KEY` | `weso-defi` | Pair `dexKey` |
 | `MAX_EVENTS_BLOCK_SPAN` | `2000` | Max blocks per `/events` call (`toBlock - fromBlock + 1`) |
-| `LATEST_BLOCK_LAG` | `5` | `/latest-block` = min tip across upstreams − lag |
+| `LATEST_BLOCK_LAG` | `5` | `/latest-block` = min tip across reachable, non-stale upstreams − lag |
 | `LATEST_BLOCK_SAMPLES` | `3` | Tip samples per upstream |
 | `HTTP_TIMEOUT_MS` | `20000` | Per-attempt upstream timeout |
 | `UPSTREAM_ATTEMPTS` | `8` | Attempts per upstream (exponential backoff) before fail-over |
@@ -96,15 +97,18 @@ Event semantics (amounts, fees, reserves, `txnIndex` / `eventIndex` / `maker`) a
 
 ## Known limitations
 
-1. **Retained history.** The default public LCD keeps a limited block/tx history (lowest ≈ block 30.52M on
-   2026-10-05). Ranges below it return 503 `height_not_available`. Add an archive LCD to `LCD_URLS` for backfill.
-2. **Several events of one pair in a single tx** (never observed in retained history) return 503: intermediate
-   reserves are not observable on-chain, and the adapter will not guess.
+1. **Retained history.** Public LCDs keep a limited block/tx history (publicnode ≈ 30.52M, stakely ≈ 28.1M
+   blocks / txs on 2026-10-07; at-height *state* may be pruned higher). A range is served by the first upstream
+   that retains it; below every upstream's history the request returns 503 `height_not_available` (with
+   `lowestAvailableBlock` when the nodes report it). Add an archive LCD to `LCD_URLS` for deeper backfill.
+2. **Several events of one pair in a single tx** (never observed in retained history) get per-event reserves by
+   applying the tx's balance deltas in event-position order from the state before the tx (see docs). Only the
+   last event of the tx is pinned to on-chain state directly; earlier ones are reconstructed from exact deltas.
 3. **Unexplained balance changes.** If a pool balance changes in a block without matching events (for example a
    wrap-vault mint straight into a pair), the request returns 503 rather than reporting unverified reserves.
 4. **cwLUNC USD price.** cwLUNC has no CoinGecko id; the adapter does not invent one (see docs).
 5. **Curve asset1 reserve is 0** by design (no pooled curve tokens; see docs).
 
-Phase 2 (deferred): forex orderbook fills from `https://weso.world/api/orderbook-fills`.
+Phase 2 (deferred): forex orderbook fills, once they are published by a standalone API (not part of this adapter).
 
 Do **not** submit the GeckoTerminal form from this repo.
