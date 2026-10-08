@@ -201,6 +201,12 @@ export interface ParsedEvent {
   amount1?: bigint;
   /** priceNative (asset1 per asset0) computed exactly from curve amounts */
   priceNative?: string;
+  /**
+   * Incoming transfers that trigger this event and are recorded BEFORE its
+   * wasm section (swap offer; native join deposits). Used to split balance
+   * deltas between several events of one pair inside one tx.
+   */
+  triggers?: Array<{ assetId: string; amount: bigint }>;
 }
 
 export class ParseError extends Error {
@@ -287,6 +293,7 @@ export function extractPairEvents(tx: TxResponse, pair: PairDef, flat?: FlatEven
         }
       }
       if (pe.priceNative === undefined) continue; // zero-amount swap: see price()
+      if (offerId && offer > 0n) pe.triggers = [{ assetId: offerId, amount: offer }];
       out.push(pe);
       continue;
     }
@@ -300,7 +307,12 @@ export function extractPairEvents(tx: TxResponse, pair: PairDef, flat?: FlatEven
       const amount0 = (assets.get(pair.asset0Id) ?? 0n) - (refund.get(pair.asset0Id) ?? 0n);
       const amount1 = (assets.get(pair.asset1Id) ?? 0n) - (refund.get(pair.asset1Id) ?? 0n);
       if (amount0 < 0n || amount1 < 0n) throw new ParseError(`negative join amount in ${tx.txhash}`);
-      out.push({ ...base, eventType: "join", amount0, amount1 });
+      // native deposits arrive with the message funds (before the pair's wasm
+      // section); CW20 deposits are pulled by the pair afterwards (TransferFrom)
+      const triggers = [...assets.entries()]
+        .filter(([id, amt]) => !id.startsWith("terra1") && amt > 0n)
+        .map(([assetId, amount]) => ({ assetId, amount }));
+      out.push({ ...base, eventType: "join", amount0, amount1, ...(triggers.length ? { triggers } : {}) });
       continue;
     }
 
@@ -412,4 +424,65 @@ export function txMentions(tx: TxResponse, address: string, flat?: FlatEvent[]):
 
 export function renderAmount(v: bigint | undefined, decimals: number): string | undefined {
   return v == null ? undefined : decimalize(v, decimals);
+}
+
+// ------------------------------------------------- several events in one tx
+
+/**
+ * Pool balances after each of several events of ONE pair inside ONE tx.
+ *
+ * `before` is the pool state before the tx, `deltas` every balance change of the
+ * pool in the tx (positions = flattened event index). Each delta is applied in
+ * event-position order and attributed to an event as follows:
+ *  - the boundary between event k-1 and event k is the position of event k's
+ *    trigger (its swap offer / native join deposit arriving at the pool, which
+ *    is recorded just BEFORE the pair's wasm section), or event k's own
+ *    position when no trigger is visible (CW20 join deposits are pulled after
+ *    the section; exits have no tracked inflow);
+ *  - everything before that boundary (outputs, fees, payouts, CW20 pulls of
+ *    event k-1) belongs to event k-1, the rest to event k and later.
+ * The last event therefore always equals before + all deltas (the state after
+ * the tx, which the caller verifies against the chain). `trackAsset1 = false`
+ * keeps asset1 at `before[1]` (bonding curves: nothing pooled).
+ */
+export function intraTxReserves(
+  pair: Pick<PairDef, "asset0Id" | "asset1Id">,
+  before: readonly [bigint, bigint],
+  events: ReadonlyArray<Pick<ParsedEvent, "eventIndex" | "triggers">>,
+  deltas: ReadonlyArray<Delta>,
+  trackAsset1 = true,
+): Array<[bigint, bigint]> {
+  const order = events.map((ev, i) => ({ ev, i })).sort((a, b) => a.ev.eventIndex - b.ev.eventIndex);
+  for (let k = 1; k < order.length; k++) {
+    if (order[k].ev.eventIndex === order[k - 1].ev.eventIndex) throw new Error("duplicate event position");
+  }
+  // boundaries[k] = first position that belongs to event k (k >= 1)
+  const boundaries: number[] = [Number.NEGATIVE_INFINITY];
+  for (let k = 1; k < order.length; k++) {
+    const lo = order[k - 1].ev.eventIndex;
+    const hi = order[k].ev.eventIndex;
+    let boundary = hi;
+    for (const t of order[k].ev.triggers ?? []) {
+      // the LAST matching inflow before event k (closest to its section)
+      let pos: number | null = null;
+      for (const d of deltas) {
+        if (d.eventIndex > lo && d.eventIndex < hi && d.assetId === t.assetId && d.amount === t.amount) pos = d.eventIndex;
+      }
+      if (pos != null && pos < boundary) boundary = pos;
+    }
+    boundaries.push(boundary);
+  }
+  const out = new Array<[bigint, bigint]>(events.length);
+  for (let k = 0; k < order.length; k++) {
+    const end = k + 1 < order.length ? boundaries[k + 1] : Number.POSITIVE_INFINITY;
+    let r0 = before[0];
+    let r1 = before[1];
+    for (const d of deltas) {
+      if (d.eventIndex >= end) continue;
+      if (d.assetId === pair.asset0Id) r0 += d.amount;
+      else if (trackAsset1 && d.assetId === pair.asset1Id) r1 += d.amount;
+    }
+    out[order[k].i] = [r0, r1];
+  }
+  return out;
 }
